@@ -8,16 +8,23 @@ import (
 	"github.com/google/uuid"
 )
 
+// DequeueRecord represents a single dequeue event for a consumer
+type DequeueRecord struct {
+	DataID    string    `json:"data_id"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
 // Consumer represents a queue consumer with independent position tracking
 type Consumer struct {
-	id               string
-	chunkElement     *list.Element // Current chunk position
-	indexInChunk     int           // Position within current chunk
-	notificationCh   chan int      // Notification of expired items
-	mutex            sync.Mutex
-	queue            *Queue        // Reference to parent queue
-	lastReadTime     time.Time     // For tracking consumer activity
-	totalItemsRead   int64         // Total items this consumer has read
+	id             string
+	chunkElement   *list.Element // Current chunk position
+	indexInChunk   int           // Position within current chunk
+	notificationCh chan int      // Notification of expired items
+	mutex          sync.Mutex
+	queue          *Queue          // Reference to parent queue
+	lastReadTime   time.Time       // For tracking consumer activity
+	totalItemsRead int64           // Total items this consumer has read
+	dequeueHistory []DequeueRecord // Track dequeue events locally
 }
 
 // NewConsumer creates a new consumer
@@ -30,6 +37,7 @@ func NewConsumer(queue *Queue) *Consumer {
 		queue:          queue,
 		lastReadTime:   time.Now(),
 		totalItemsRead: 0,
+		dequeueHistory: make([]DequeueRecord, 0, 100), // Pre-allocate some capacity
 	}
 }
 
@@ -63,36 +71,39 @@ func (c *Consumer) SetPosition(element *list.Element, index int) {
 func (c *Consumer) Read() *QueueData {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	
+
 	// Initialize position if this is the first read
 	if c.chunkElement == nil {
 		c.queue.mutex.RLock()
 		firstElement := c.queue.data.GetFirstElement()
 		c.queue.mutex.RUnlock()
-		
+
 		if firstElement == nil {
 			return nil // No data available
 		}
-		
+
 		c.chunkElement = firstElement
 		c.indexInChunk = 0
 	}
-	
+
 	// Try to read from current position
 	for c.chunkElement != nil {
 		chunk := c.chunkElement.Value.(*ChunkNode)
-		
+
 		if c.indexInChunk < chunk.Size {
 			data := chunk.Get(c.indexInChunk)
 			if data != nil {
-				// Add dequeue event to the data
-				data.AddEvent(c.queue.name, "dequeue")
-				
+				// Record dequeue event locally (no modification to shared data)
+				c.dequeueHistory = append(c.dequeueHistory, DequeueRecord{
+					DataID:    data.ID,
+					Timestamp: time.Now(),
+				})
+
 				// Move to next position
 				c.indexInChunk++
 				c.lastReadTime = time.Now()
 				c.totalItemsRead++
-				
+
 				return data
 			}
 			// Skip nil items
@@ -103,7 +114,7 @@ func (c *Consumer) Read() *QueueData {
 			c.indexInChunk = 0
 		}
 	}
-	
+
 	return nil // No more data available
 }
 
@@ -112,9 +123,9 @@ func (c *Consumer) ReadBatch(limit int) []*QueueData {
 	if limit <= 0 {
 		return nil
 	}
-	
+
 	batch := make([]*QueueData, 0, limit)
-	
+
 	for len(batch) < limit {
 		data := c.Read()
 		if data == nil {
@@ -122,7 +133,7 @@ func (c *Consumer) ReadBatch(limit int) []*QueueData {
 		}
 		batch = append(batch, data)
 	}
-	
+
 	return batch
 }
 
@@ -130,20 +141,20 @@ func (c *Consumer) ReadBatch(limit int) []*QueueData {
 func (c *Consumer) HasMoreData() bool {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	
+
 	if c.chunkElement == nil {
 		c.queue.mutex.RLock()
 		hasData := !c.queue.data.IsEmpty()
 		c.queue.mutex.RUnlock()
 		return hasData
 	}
-	
+
 	// Check current chunk
 	chunk := c.chunkElement.Value.(*ChunkNode)
 	if c.indexInChunk < chunk.Size {
 		return true
 	}
-	
+
 	// Check if there are more chunks
 	return c.chunkElement.Next() != nil
 }
@@ -152,18 +163,18 @@ func (c *Consumer) HasMoreData() bool {
 func (c *Consumer) GetUnreadCount() int64 {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	
+
 	if c.chunkElement == nil {
 		c.queue.mutex.RLock()
 		totalItems := c.queue.data.GetTotalItems()
 		c.queue.mutex.RUnlock()
 		return totalItems
 	}
-	
+
 	c.queue.mutex.RLock()
 	unreadCount := c.queue.data.CountItemsFrom(c.chunkElement, c.indexInChunk)
 	c.queue.mutex.RUnlock()
-	
+
 	return unreadCount
 }
 
@@ -171,7 +182,7 @@ func (c *Consumer) GetUnreadCount() int64 {
 func (c *Consumer) GetStats() ConsumerStats {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	
+
 	// Calculate unread count without additional locking
 	var unreadCount int64
 	if c.chunkElement == nil {
@@ -183,13 +194,24 @@ func (c *Consumer) GetStats() ConsumerStats {
 		unreadCount = c.queue.data.CountItemsFrom(c.chunkElement, c.indexInChunk)
 		c.queue.mutex.RUnlock()
 	}
-	
+
 	return ConsumerStats{
 		ID:             c.id,
 		TotalItemsRead: c.totalItemsRead,
 		UnreadItems:    unreadCount,
 		LastReadTime:   c.lastReadTime,
 	}
+}
+
+// GetDequeueHistory returns a copy of the dequeue history for this consumer
+func (c *Consumer) GetDequeueHistory() []DequeueRecord {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	// Return copy to prevent external modification
+	history := make([]DequeueRecord, len(c.dequeueHistory))
+	copy(history, c.dequeueHistory)
+	return history
 }
 
 // NotifyExpiredItems notifies the consumer about expired items
@@ -208,17 +230,17 @@ func (c *Consumer) NotifyExpiredItems(count int) {
 func (c *Consumer) UpdatePositionAfterExpiration(expiredCount int, newFirstElement *list.Element) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	
+
 	if c.chunkElement == nil || expiredCount == 0 {
 		return
 	}
-	
+
 	// If the consumer is reading from expired chunks, update position
 	if newFirstElement != nil {
 		// Check if our current position is in an expired chunk
 		currentElement := c.chunkElement
 		stillValid := false
-		
+
 		// Walk through remaining chunks to see if our position is still valid
 		for element := newFirstElement; element != nil; element = element.Next() {
 			if element == currentElement {
@@ -226,7 +248,7 @@ func (c *Consumer) UpdatePositionAfterExpiration(expiredCount int, newFirstEleme
 				break
 			}
 		}
-		
+
 		if !stillValid {
 			// Our position is in an expired chunk, move to the new first element
 			c.chunkElement = newFirstElement
@@ -268,20 +290,20 @@ func NewConsumerManager(queue *Queue) *ConsumerManager {
 func (cm *ConsumerManager) AddConsumer() *Consumer {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
-	
+
 	consumer := NewConsumer(cm.queue)
-	
+
 	// Initialize consumer to read from the beginning
 	cm.queue.mutex.RLock()
 	firstElement := cm.queue.data.GetFirstElement()
 	cm.queue.mutex.RUnlock()
-	
+
 	if firstElement != nil {
 		consumer.SetPosition(firstElement, 0)
 	}
-	
+
 	cm.consumers[consumer.GetID()] = consumer
-	
+
 	return consumer
 }
 
@@ -289,15 +311,15 @@ func (cm *ConsumerManager) AddConsumer() *Consumer {
 func (cm *ConsumerManager) RemoveConsumer(consumerID string) bool {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
-	
+
 	consumer, exists := cm.consumers[consumerID]
 	if !exists {
 		return false
 	}
-	
+
 	consumer.Close()
 	delete(cm.consumers, consumerID)
-	
+
 	return true
 }
 
@@ -305,7 +327,7 @@ func (cm *ConsumerManager) RemoveConsumer(consumerID string) bool {
 func (cm *ConsumerManager) GetConsumer(consumerID string) *Consumer {
 	cm.mutex.RLock()
 	defer cm.mutex.RUnlock()
-	
+
 	return cm.consumers[consumerID]
 }
 
@@ -313,12 +335,12 @@ func (cm *ConsumerManager) GetConsumer(consumerID string) *Consumer {
 func (cm *ConsumerManager) GetAllConsumers() []*Consumer {
 	cm.mutex.RLock()
 	defer cm.mutex.RUnlock()
-	
+
 	consumers := make([]*Consumer, 0, len(cm.consumers))
 	for _, consumer := range cm.consumers {
 		consumers = append(consumers, consumer)
 	}
-	
+
 	return consumers
 }
 
@@ -326,7 +348,7 @@ func (cm *ConsumerManager) GetAllConsumers() []*Consumer {
 func (cm *ConsumerManager) NotifyAllConsumersOfExpiration(expiredCounts map[string]int, newFirstElement *list.Element) {
 	cm.mutex.RLock()
 	defer cm.mutex.RUnlock()
-	
+
 	for consumerID, consumer := range cm.consumers {
 		if expiredCount, hasExpired := expiredCounts[consumerID]; hasExpired && expiredCount > 0 {
 			consumer.NotifyExpiredItems(expiredCount)
@@ -339,7 +361,7 @@ func (cm *ConsumerManager) NotifyAllConsumersOfExpiration(expiredCounts map[stri
 func (cm *ConsumerManager) GetConsumerCount() int {
 	cm.mutex.RLock()
 	defer cm.mutex.RUnlock()
-	
+
 	return len(cm.consumers)
 }
 
@@ -347,11 +369,11 @@ func (cm *ConsumerManager) GetConsumerCount() int {
 func (cm *ConsumerManager) GetConsumerStats() []ConsumerStats {
 	cm.mutex.RLock()
 	defer cm.mutex.RUnlock()
-	
+
 	stats := make([]ConsumerStats, 0, len(cm.consumers))
 	for _, consumer := range cm.consumers {
 		stats = append(stats, consumer.GetStats())
 	}
-	
+
 	return stats
 }

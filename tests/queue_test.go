@@ -43,7 +43,7 @@ func TestEnqueueDequeue(t *testing.T) {
 	// Test consumer
 	consumer := q.AddConsumer()
 	data := consumer.Read()
-	
+
 	if data == nil {
 		t.Fatal("Expected data, got nil")
 	}
@@ -52,17 +52,23 @@ func TestEnqueueDequeue(t *testing.T) {
 		t.Errorf("Expected payload '%v', got '%v'", testData, data.Payload)
 	}
 
-	// Verify event history
-	if len(data.Events) != 2 {
-		t.Errorf("Expected 2 events, got %d", len(data.Events))
+	// Verify enqueue event
+	if data.EnqueueEvent.EventType != "enqueue" {
+		t.Errorf("Enqueue event should be 'enqueue', got '%s'", data.EnqueueEvent.EventType)
 	}
 
-	if data.Events[0].EventType != "enqueue" {
-		t.Errorf("First event should be 'enqueue', got '%s'", data.Events[0].EventType)
+	if data.EnqueueEvent.QueueName != "test-queue" {
+		t.Errorf("Expected queue name 'test-queue', got '%s'", data.EnqueueEvent.QueueName)
 	}
 
-	if data.Events[1].EventType != "dequeue" {
-		t.Errorf("Second event should be 'dequeue', got '%s'", data.Events[1].EventType)
+	// Verify dequeue was recorded in consumer history
+	history := consumer.GetDequeueHistory()
+	if len(history) != 1 {
+		t.Errorf("Expected 1 dequeue record, got %d", len(history))
+	}
+
+	if len(history) > 0 && history[0].DataID != data.ID {
+		t.Errorf("Expected dequeue record for data ID %s, got %s", data.ID, history[0].DataID)
 	}
 }
 
@@ -249,7 +255,7 @@ func TestMemoryLimit(t *testing.T) {
 			break
 		}
 		enqueueCount++
-		
+
 		// Prevent infinite loop in case memory limit isn't working
 		if enqueueCount > 20 {
 			t.Error("Memory limit not enforced - too many items enqueued")

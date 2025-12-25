@@ -8,13 +8,13 @@ import (
 const (
 	// MaxQueueMemory is the maximum memory allowed for a queue (1MB)
 	MaxQueueMemory = 1024 * 1024 // 1MB
-	
+
 	// BaseQueueDataSize is the base size of QueueData struct without payload
 	BaseQueueDataSize = int64(unsafe.Sizeof(QueueData{}))
-	
+
 	// BaseQueueEventSize is the base size of QueueEvent struct
 	BaseQueueEventSize = int64(unsafe.Sizeof(QueueEvent{}))
-	
+
 	// ChunkNodeSize is the size of a ChunkNode struct
 	ChunkNodeSize = int64(unsafe.Sizeof(ChunkNode{}))
 )
@@ -34,26 +34,25 @@ func NewMemoryTracker() *MemoryTracker {
 }
 
 // EstimateQueueDataSize estimates the memory size of a QueueData item
+// QueueData is now immutable, so this size is fixed after creation
 func (mt *MemoryTracker) EstimateQueueDataSize(data *QueueData) int64 {
 	if data == nil {
 		return 0
 	}
-	
+
 	size := BaseQueueDataSize
-	
+
 	// Add size of ID string
 	size += int64(len(data.ID))
-	
+
 	// Add size of payload
 	size += mt.estimatePayloadSize(data.Payload)
-	
-	// Add size of events slice
-	size += int64(len(data.Events)) * BaseQueueEventSize
-	for _, event := range data.Events {
-		size += int64(len(event.QueueName))
-		size += int64(len(event.EventType))
-	}
-	
+
+	// Add size of single enqueue event
+	size += BaseQueueEventSize
+	size += int64(len(data.EnqueueEvent.QueueName))
+	size += int64(len(data.EnqueueEvent.EventType))
+
 	return size
 }
 
@@ -62,7 +61,7 @@ func (mt *MemoryTracker) estimatePayloadSize(payload interface{}) int64 {
 	if payload == nil {
 		return 0
 	}
-	
+
 	v := reflect.ValueOf(payload)
 	return mt.estimateValueSize(v)
 }
@@ -72,7 +71,7 @@ func (mt *MemoryTracker) estimateValueSize(v reflect.Value) int64 {
 	if !v.IsValid() {
 		return 0
 	}
-	
+
 	switch v.Kind() {
 	case reflect.Bool:
 		return 1

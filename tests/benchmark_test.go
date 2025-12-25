@@ -176,20 +176,17 @@ func BenchmarkMixedWorkload(b *testing.B) {
 }
 
 func BenchmarkMemoryEstimation(b *testing.B) {
-	q := queue.NewQueue("benchmark-queue")
-	defer q.Close()
-
 	testPayload := map[string]interface{}{
-		"id":      12345,
-		"name":    "test item",
-		"data":    []byte("some binary data here"),
-		"active":  true,
-		"tags":    []string{"tag1", "tag2", "tag3"},
+		"id":     12345,
+		"name":   "test item",
+		"data":   []byte("some binary data here"),
+		"active": true,
+		"tags":   []string{"tag1", "tag2", "tag3"},
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		data := queue.NewQueueData(testPayload)
+		data := queue.NewQueueData(testPayload, "benchmark-queue")
 		_ = data // Use the data to prevent optimization
 	}
 }
@@ -200,7 +197,7 @@ func BenchmarkChunkedListOperations(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		data := queue.NewQueueData(i)
+		data := queue.NewQueueData(i, "benchmark-queue")
 		chunkedList.Enqueue(data)
 	}
 }
@@ -232,8 +229,8 @@ func TestHighThroughputStress(t *testing.T) {
 			count := 0
 			for time.Since(start) < testDuration && count < itemsPerProducer {
 				payload := map[string]interface{}{
-					"producer": producerID,
-					"item":     count,
+					"producer":  producerID,
+					"item":      count,
 					"timestamp": time.Now(),
 				}
 				if err := q.Enqueue(payload); err != nil {
@@ -254,7 +251,7 @@ func TestHighThroughputStress(t *testing.T) {
 			consumer := q.AddConsumer()
 			count := 0
 			start := time.Now()
-			
+
 			for time.Since(start) < testDuration+5*time.Second {
 				data := consumer.Read()
 				if data != nil {
@@ -271,7 +268,7 @@ func TestHighThroughputStress(t *testing.T) {
 	consumerWg.Wait()
 
 	stats := q.GetQueueStats()
-	
+
 	t.Logf("Stress test results:")
 	t.Logf("  Total produced: %d", totalProduced)
 	t.Logf("  Total consumed: %d", totalConsumed)
@@ -295,7 +292,7 @@ func TestMemoryPressureStress(t *testing.T) {
 
 	// Create increasingly large payloads
 	payloadSizes := []int{1024, 5120, 10240, 20480} // 1KB, 5KB, 10KB, 20KB
-	
+
 	for _, size := range payloadSizes {
 		payload := make([]byte, size)
 		for i := range payload {
@@ -313,7 +310,7 @@ func TestMemoryPressureStress(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			count++
-			
+
 			// Safety check
 			if count > 1000 {
 				t.Fatal("Too many items enqueued, memory limit not working")
@@ -374,7 +371,7 @@ func TestLongRunningStability(t *testing.T) {
 		go func(consumerID int) {
 			defer wg.Done()
 			consumer := q.AddConsumer()
-			
+
 			for time.Since(start) < testDuration+10*time.Second {
 				data := consumer.Read()
 				if data != nil {
@@ -383,7 +380,7 @@ func TestLongRunningStability(t *testing.T) {
 				} else {
 					time.Sleep(10 * time.Millisecond)
 				}
-				
+
 				// Check for expiration notifications
 				select {
 				case expiredCount := <-consumer.GetNotificationChannel():
@@ -401,7 +398,7 @@ func TestLongRunningStability(t *testing.T) {
 	finalStats := q.GetQueueStats()
 	t.Logf("Stability test completed:")
 	t.Logf("  Final items in queue: %d", finalStats.TotalItems)
-	t.Logf("  Final memory usage: %d bytes (%.2f%%)", 
+	t.Logf("  Final memory usage: %d bytes (%.2f%%)",
 		finalStats.MemoryUsage, finalStats.MemoryPercent)
 	t.Logf("  Active consumers: %d", finalStats.ConsumerCount)
 }
@@ -430,15 +427,15 @@ func TestConsumerLagStress(t *testing.T) {
 	for i := 0; i < numConsumers; i++ {
 		consumers[i] = q.AddConsumer()
 		wg.Add(1)
-		
+
 		go func(consumerID int, consumer *queue.Consumer) {
 			defer wg.Done()
 			count := 0
 			expiredNotifications := 0
-			
+
 			// Simulate different processing speeds
 			processingDelay := time.Duration(consumerID+1) * 5 * time.Millisecond
-			
+
 			for {
 				data := consumer.Read()
 				if data != nil {
@@ -447,7 +444,7 @@ func TestConsumerLagStress(t *testing.T) {
 				} else {
 					break // No more data
 				}
-				
+
 				// Check for expiration notifications
 				select {
 				case expiredCount := <-consumer.GetNotificationChannel():
@@ -456,7 +453,7 @@ func TestConsumerLagStress(t *testing.T) {
 					// No notification
 				}
 			}
-			
+
 			t.Logf("Consumer %d: read %d items, got %d expiration notifications",
 				consumerID, count, expiredNotifications)
 		}(i, consumers[i])

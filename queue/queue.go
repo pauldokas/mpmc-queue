@@ -11,7 +11,7 @@ import (
 const (
 	// DefaultTTL is the default time-to-live for queue items (10 minutes)
 	DefaultTTL = 10 * time.Minute
-	
+
 	// ExpirationCheckInterval is how often to check for expired items
 	ExpirationCheckInterval = 30 * time.Second
 )
@@ -33,7 +33,7 @@ type Queue struct {
 // NewQueue creates a new queue with the specified name
 func NewQueue(name string) *Queue {
 	memoryTracker := NewMemoryTracker()
-	
+
 	queue := &Queue{
 		name:              name,
 		data:              NewChunkedList(memoryTracker),
@@ -43,13 +43,13 @@ func NewQueue(name string) *Queue {
 		expirationEnabled: true,
 		createdAt:         time.Now(),
 	}
-	
+
 	queue.consumers = NewConsumerManager(queue)
-	
+
 	// Start expiration background task
 	queue.wg.Add(1)
 	go queue.expirationWorker()
-	
+
 	return queue
 }
 
@@ -67,12 +67,11 @@ func (q *Queue) GetName() string {
 
 // Enqueue adds data to the queue
 func (q *Queue) Enqueue(payload interface{}) error {
-	data := NewQueueData(payload)
-	data.AddEvent(q.name, "enqueue")
-	
+	data := NewQueueData(payload, q.name)
+
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
-	
+
 	return q.data.Enqueue(data)
 }
 
@@ -81,17 +80,16 @@ func (q *Queue) EnqueueBatch(payloads []interface{}) error {
 	if len(payloads) == 0 {
 		return nil
 	}
-	
+
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
-	
+
 	// Pre-validate that all items can be added
 	dataItems := make([]*QueueData, len(payloads))
 	for i, payload := range payloads {
-		data := NewQueueData(payload)
-		data.AddEvent(q.name, "enqueue")
+		data := NewQueueData(payload, q.name)
 		dataItems[i] = data
-		
+
 		if !q.memoryTracker.CanAddData(data) {
 			return &MemoryLimitError{
 				Current: q.memoryTracker.GetMemoryUsage(),
@@ -100,14 +98,14 @@ func (q *Queue) EnqueueBatch(payloads []interface{}) error {
 			}
 		}
 	}
-	
+
 	// Add all items
 	for _, data := range dataItems {
 		if err := q.data.Enqueue(data); err != nil {
 			return err
 		}
 	}
-	
+
 	return nil
 }
 
@@ -135,7 +133,7 @@ func (q *Queue) GetAllConsumers() []*Consumer {
 func (q *Queue) GetQueueStats() QueueStats {
 	q.mutex.RLock()
 	defer q.mutex.RUnlock()
-	
+
 	return QueueStats{
 		Name:          q.name,
 		TotalItems:    q.data.GetTotalItems(),
@@ -156,7 +154,7 @@ func (q *Queue) GetConsumerStats() []ConsumerStats {
 func (q *Queue) IsEmpty() bool {
 	q.mutex.RLock()
 	defer q.mutex.RUnlock()
-	
+
 	return q.data.IsEmpty()
 }
 
@@ -164,7 +162,7 @@ func (q *Queue) IsEmpty() bool {
 func (q *Queue) GetMemoryUsage() int64 {
 	q.mutex.RLock()
 	defer q.mutex.RUnlock()
-	
+
 	return q.memoryTracker.GetMemoryUsage()
 }
 
@@ -172,7 +170,7 @@ func (q *Queue) GetMemoryUsage() int64 {
 func (q *Queue) SetTTL(ttl time.Duration) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
-	
+
 	q.ttl = ttl
 }
 
@@ -180,7 +178,7 @@ func (q *Queue) SetTTL(ttl time.Duration) {
 func (q *Queue) GetTTL() time.Duration {
 	q.mutex.RLock()
 	defer q.mutex.RUnlock()
-	
+
 	return q.ttl
 }
 
@@ -188,7 +186,7 @@ func (q *Queue) GetTTL() time.Duration {
 func (q *Queue) EnableExpiration() {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
-	
+
 	q.expirationEnabled = true
 }
 
@@ -196,7 +194,7 @@ func (q *Queue) EnableExpiration() {
 func (q *Queue) DisableExpiration() {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
-	
+
 	q.expirationEnabled = false
 }
 
@@ -209,12 +207,12 @@ func (q *Queue) ForceExpiration() int {
 func (q *Queue) Close() {
 	close(q.stopChan)
 	q.wg.Wait()
-	
+
 	// Close all consumers
 	for _, consumer := range q.consumers.GetAllConsumers() {
 		consumer.Close()
 	}
-	
+
 	// Clear queue data
 	q.mutex.Lock()
 	q.data.Clear()
@@ -224,12 +222,12 @@ func (q *Queue) Close() {
 // CloseWithContext closes the queue with a context for timeout
 func (q *Queue) CloseWithContext(ctx context.Context) error {
 	done := make(chan struct{})
-	
+
 	go func() {
 		q.Close()
 		close(done)
 	}()
-	
+
 	select {
 	case <-done:
 		return nil
@@ -241,10 +239,10 @@ func (q *Queue) CloseWithContext(ctx context.Context) error {
 // expirationWorker runs in the background to clean up expired items
 func (q *Queue) expirationWorker() {
 	defer q.wg.Done()
-	
+
 	ticker := time.NewTicker(ExpirationCheckInterval)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ticker.C:
@@ -261,31 +259,31 @@ func (q *Queue) expirationWorker() {
 func (q *Queue) cleanupExpiredItems() int {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
-	
+
 	// Calculate expired counts for each consumer before cleanup
 	expiredCounts := q.calculateExpiredCountsPerConsumer()
-	
+
 	// Remove expired items
 	expiredCount := q.data.RemoveExpiredData(q.ttl)
-	
+
 	if expiredCount > 0 {
 		// Notify consumers about expired items
 		newFirstElement := q.data.GetFirstElement()
 		q.consumers.NotifyAllConsumersOfExpiration(expiredCounts, newFirstElement)
 	}
-	
+
 	return expiredCount
 }
 
 // calculateExpiredCountsPerConsumer calculates how many unread items will be expired for each consumer
 func (q *Queue) calculateExpiredCountsPerConsumer() map[string]int {
 	expiredCounts := make(map[string]int)
-	
+
 	consumers := q.consumers.GetAllConsumers()
-	
+
 	for _, consumer := range consumers {
 		chunkElement, indexInChunk := consumer.GetPosition()
-		
+
 		if chunkElement == nil {
 			// Consumer hasn't started reading, count all expired items
 			expiredCount := q.countExpiredItemsFromBeginning()
@@ -296,7 +294,7 @@ func (q *Queue) calculateExpiredCountsPerConsumer() map[string]int {
 			expiredCounts[consumer.GetID()] = expiredCount
 		}
 	}
-	
+
 	return expiredCounts
 }
 
@@ -304,7 +302,7 @@ func (q *Queue) calculateExpiredCountsPerConsumer() map[string]int {
 func (q *Queue) countExpiredItemsFromBeginning() int {
 	count := 0
 	element := q.data.GetFirstElement()
-	
+
 	for element != nil {
 		chunk := q.data.GetChunk(element)
 		for i := 0; i < chunk.Size; i++ {
@@ -317,7 +315,7 @@ func (q *Queue) countExpiredItemsFromBeginning() int {
 		}
 		element = element.Next()
 	}
-	
+
 	return count
 }
 
@@ -326,10 +324,10 @@ func (q *Queue) countExpiredItemsFromPosition(startElement *list.Element, startI
 	count := 0
 	element := startElement
 	index := startIndex
-	
+
 	for element != nil {
 		chunk := q.data.GetChunk(element)
-		
+
 		for i := index; i < chunk.Size; i++ {
 			data := chunk.Get(i)
 			if data != nil && data.IsExpired(q.ttl) {
@@ -338,11 +336,11 @@ func (q *Queue) countExpiredItemsFromPosition(startElement *list.Element, startI
 				return count // Items are ordered by creation time
 			}
 		}
-		
+
 		element = element.Next()
 		index = 0 // Reset index for subsequent chunks
 	}
-	
+
 	return count
 }
 

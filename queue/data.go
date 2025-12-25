@@ -14,31 +14,32 @@ type QueueEvent struct {
 }
 
 // QueueData represents a single item in the queue
+// QueueData is immutable after creation for thread-safety
 type QueueData struct {
-	ID      string        `json:"id"`      // UUID
-	Payload interface{}   `json:"payload"` // Arbitrary data
-	Events  []QueueEvent  `json:"events"`  // History of queue events
-	Created time.Time     `json:"created"` // For expiration tracking
+	ID           string      `json:"id"`            // UUID
+	Payload      interface{} `json:"payload"`       // Arbitrary data
+	EnqueueEvent QueueEvent  `json:"enqueue_event"` // Single enqueue event (immutable)
+	Created      time.Time   `json:"created"`       // For expiration tracking
 }
 
-// NewQueueData creates a new QueueData instance
-func NewQueueData(payload interface{}) *QueueData {
+// NewQueueData creates a new QueueData instance with enqueue event
+func NewQueueData(payload interface{}, queueName string) *QueueData {
+	now := time.Now()
 	return &QueueData{
 		ID:      uuid.New().String(),
 		Payload: payload,
-		Events:  make([]QueueEvent, 0),
-		Created: time.Now(),
+		EnqueueEvent: QueueEvent{
+			Timestamp: now,
+			QueueName: queueName,
+			EventType: "enqueue",
+		},
+		Created: now,
 	}
 }
 
-// AddEvent adds an event to the data's history
-func (qd *QueueData) AddEvent(queueName, eventType string) {
-	event := QueueEvent{
-		Timestamp: time.Now(),
-		QueueName: queueName,
-		EventType: eventType,
-	}
-	qd.Events = append(qd.Events, event)
+// GetEnqueueEvent returns the enqueue event for this data
+func (qd *QueueData) GetEnqueueEvent() QueueEvent {
+	return qd.EnqueueEvent
 }
 
 // IsExpired checks if the data has exceeded the TTL
@@ -100,7 +101,7 @@ func (cn *ChunkNode) RemoveExpired(ttl time.Duration) int {
 			break // Items are ordered by creation time
 		}
 	}
-	
+
 	// Compact the array if items were removed
 	if removed > 0 {
 		for i := removed; i < cn.Size; i++ {
@@ -109,7 +110,7 @@ func (cn *ChunkNode) RemoveExpired(ttl time.Duration) int {
 		}
 		cn.Size -= removed
 	}
-	
+
 	return removed
 }
 
@@ -118,12 +119,12 @@ func (cn *ChunkNode) GetEarliestExpiry() *time.Time {
 	if cn.Size == 0 {
 		return nil
 	}
-	
+
 	for i := 0; i < cn.Size; i++ {
 		if cn.Data[i] != nil {
 			return &cn.Data[i].Created
 		}
 	}
-	
+
 	return nil
 }
