@@ -16,14 +16,14 @@ type QueueEvent struct {
 // QueueData represents a single item in the queue
 // QueueData is immutable after creation for thread-safety
 type QueueData struct {
-	ID           string      `json:"id"`            // UUID
-	Payload      interface{} `json:"payload"`       // Arbitrary data
-	EnqueueEvent QueueEvent  `json:"enqueue_event"` // Single enqueue event (immutable)
-	Created      time.Time   `json:"created"`       // For expiration tracking
+	ID           string     `json:"id"`            // UUID
+	Payload      any        `json:"payload"`       // Arbitrary data
+	EnqueueEvent QueueEvent `json:"enqueue_event"` // Single enqueue event (immutable)
+	Created      time.Time  `json:"created"`       // For expiration tracking
 }
 
 // NewQueueData creates a new QueueData instance with enqueue event
-func NewQueueData(payload interface{}, queueName string) *QueueData {
+func NewQueueData(payload any, queueName string) *QueueData {
 	now := time.Now()
 	return &QueueData{
 		ID:      uuid.New().String(),

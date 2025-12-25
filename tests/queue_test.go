@@ -77,7 +77,7 @@ func TestMultipleConsumers(t *testing.T) {
 	defer q.Close()
 
 	// Enqueue test data
-	payloads := []interface{}{"item1", "item2", "item3"}
+	payloads := []any{"item1", "item2", "item3"}
 	for _, payload := range payloads {
 		if err := q.Enqueue(payload); err != nil {
 			t.Fatalf("Failed to enqueue %v: %v", payload, err)
@@ -114,7 +114,7 @@ func TestNewConsumerReadsAllData(t *testing.T) {
 	defer q.Close()
 
 	// Enqueue data
-	payloads := []interface{}{"item1", "item2", "item3"}
+	payloads := []any{"item1", "item2", "item3"}
 	for _, payload := range payloads {
 		q.Enqueue(payload)
 	}
@@ -130,7 +130,7 @@ func TestNewConsumerReadsAllData(t *testing.T) {
 	consumer2 := q.AddConsumer()
 
 	// New consumer should read all data from beginning
-	allData := []interface{}{"item1", "item2", "item3", "item4"}
+	allData := []any{"item1", "item2", "item3", "item4"}
 	for i, expectedPayload := range allData {
 		data := consumer2.Read()
 		if data == nil {
@@ -278,7 +278,7 @@ func TestEnqueueBatch(t *testing.T) {
 	defer q.Close()
 
 	// Test batch enqueue
-	payloads := []interface{}{"batch1", "batch2", "batch3", "batch4", "batch5"}
+	payloads := []any{"batch1", "batch2", "batch3", "batch4", "batch5"}
 	err := q.EnqueueBatch(payloads)
 	if err != nil {
 		t.Fatalf("Failed to enqueue batch: %v", err)

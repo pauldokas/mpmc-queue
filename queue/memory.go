@@ -57,7 +57,7 @@ func (mt *MemoryTracker) EstimateQueueDataSize(data *QueueData) int64 {
 }
 
 // estimatePayloadSize estimates the size of an arbitrary payload
-func (mt *MemoryTracker) estimatePayloadSize(payload interface{}) int64 {
+func (mt *MemoryTracker) estimatePayloadSize(payload any) int64 {
 	if payload == nil {
 		return 0
 	}

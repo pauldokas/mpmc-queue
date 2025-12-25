@@ -80,7 +80,7 @@ func main() {
 	fmt.Println("\n3. Batch Operations:")
 
 	// Enqueue batch
-	batchData := []interface{}{"Batch1", "Batch2", "Batch3", "Batch4"}
+	batchData := []any{"Batch1", "Batch2", "Batch3", "Batch4"}
 	err := q.EnqueueBatch(batchData)
 	if err != nil {
 		log.Fatalf("Failed to enqueue batch: %v", err)

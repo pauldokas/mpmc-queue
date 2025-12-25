@@ -31,7 +31,7 @@ func BenchmarkEnqueueBatch(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < batches; i++ {
-		batch := make([]interface{}, batchSize)
+		batch := make([]any, batchSize)
 		for j := 0; j < batchSize; j++ {
 			batch[j] = i*batchSize + j
 		}
@@ -176,7 +176,7 @@ func BenchmarkMixedWorkload(b *testing.B) {
 }
 
 func BenchmarkMemoryEstimation(b *testing.B) {
-	testPayload := map[string]interface{}{
+	testPayload := map[string]any{
 		"id":     12345,
 		"name":   "test item",
 		"data":   []byte("some binary data here"),
@@ -228,7 +228,7 @@ func TestHighThroughputStress(t *testing.T) {
 			start := time.Now()
 			count := 0
 			for time.Since(start) < testDuration && count < itemsPerProducer {
-				payload := map[string]interface{}{
+				payload := map[string]any{
 					"producer":  producerID,
 					"item":      count,
 					"timestamp": time.Now(),
@@ -353,7 +353,7 @@ func TestLongRunningStability(t *testing.T) {
 			defer wg.Done()
 			count := 0
 			for time.Since(start) < testDuration {
-				payload := map[string]interface{}{
+				payload := map[string]any{
 					"producer":  producerID,
 					"count":     count,
 					"timestamp": time.Now(),

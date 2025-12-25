@@ -66,7 +66,7 @@ func (q *Queue) GetName() string {
 }
 
 // Enqueue adds data to the queue
-func (q *Queue) Enqueue(payload interface{}) error {
+func (q *Queue) Enqueue(payload any) error {
 	data := NewQueueData(payload, q.name)
 
 	q.mutex.Lock()
@@ -76,7 +76,7 @@ func (q *Queue) Enqueue(payload interface{}) error {
 }
 
 // EnqueueBatch adds multiple items to the queue
-func (q *Queue) EnqueueBatch(payloads []interface{}) error {
+func (q *Queue) EnqueueBatch(payloads []any) error {
 	if len(payloads) == 0 {
 		return nil
 	}
