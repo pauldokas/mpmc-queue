@@ -86,25 +86,37 @@ func (cl *ChunkedList) GetChunk(element *list.Element) *ChunkNode {
 	return element.Value.(*ChunkNode)
 }
 
+// ChunkRemovalInfo tracks how many items were removed from each chunk
+type ChunkRemovalInfo struct {
+	Element      *list.Element
+	RemovedCount int
+}
+
 // RemoveExpiredData removes expired data from all chunks
-// Returns the total number of items removed
-func (cl *ChunkedList) RemoveExpiredData(ttl time.Duration) int {
+// Returns the total number of items removed and per-chunk removal info
+func (cl *ChunkedList) RemoveExpiredData(ttl time.Duration) (int, []ChunkRemovalInfo) {
 	totalRemoved := 0
+	removalInfo := make([]ChunkRemovalInfo, 0)
 
 	// Start from the front (oldest data)
 	element := cl.list.Front()
 	for element != nil {
 		chunk := element.Value.(*ChunkNode)
-		removedFromChunk := chunk.RemoveExpired(ttl)
+		removedFromChunk, removedItems := chunk.RemoveExpired(ttl)
 
 		if removedFromChunk > 0 {
-			// Update memory tracking
-			for i := 0; i < removedFromChunk; i++ {
-				// We can't track individual item memory accurately after removal,
-				// so we'll approximate based on average item size
+			// Update memory tracking properly
+			for _, data := range removedItems {
+				cl.memoryTracker.RemoveData(data)
 				cl.totalItems--
 			}
 			totalRemoved += removedFromChunk
+
+			// Track removal info for this chunk (before it might be removed)
+			removalInfo = append(removalInfo, ChunkRemovalInfo{
+				Element:      element,
+				RemovedCount: removedFromChunk,
+			})
 		}
 
 		nextElement := element.Next()
@@ -127,7 +139,7 @@ func (cl *ChunkedList) RemoveExpiredData(ttl time.Duration) int {
 		}
 	}
 
-	return totalRemoved
+	return totalRemoved, removalInfo
 }
 
 // IsEmpty returns true if the list has no items

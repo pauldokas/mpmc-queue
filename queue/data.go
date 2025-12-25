@@ -108,12 +108,15 @@ func (cn *ChunkNode) IsEmpty() bool {
 }
 
 // RemoveExpired removes expired items from the beginning of the chunk
-// Returns the number of items removed
-func (cn *ChunkNode) RemoveExpired(ttl time.Duration) int {
+// Returns the number of items removed and the removed items for memory tracking
+func (cn *ChunkNode) RemoveExpired(ttl time.Duration) (int, []*QueueData) {
 	size := cn.GetSize()
 	removed := 0
+	removedItems := make([]*QueueData, 0)
+
 	for i := 0; i < size; i++ {
 		if cn.Data[i] != nil && cn.Data[i].IsExpired(ttl) {
+			removedItems = append(removedItems, cn.Data[i])
 			cn.Data[i] = nil
 			removed++
 		} else {
@@ -130,7 +133,7 @@ func (cn *ChunkNode) RemoveExpired(ttl time.Duration) int {
 		cn.setSize(size - removed)
 	}
 
-	return removed
+	return removed, removedItems
 }
 
 // GetEarliestExpiry returns the creation time of the earliest item in the chunk

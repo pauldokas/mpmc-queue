@@ -248,12 +248,28 @@ func (c *Consumer) NotifyExpiredItems(count int) {
 // UpdatePositionAfterExpiration updates the consumer's position after items are expired
 // This is called by the queue when items are removed due to expiration
 // NOTE: This must be called while holding queue.mutex to safely traverse the list
-func (c *Consumer) UpdatePositionAfterExpiration(expiredCount int, newFirstElement *list.Element) {
+func (c *Consumer) UpdatePositionAfterExpiration(expiredCount int, newFirstElement *list.Element, removalInfo []ChunkRemovalInfo) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
 	if c.chunkElement == nil || expiredCount == 0 {
 		return
+	}
+
+	// Check if items were removed from the chunk we're currently reading
+	for _, info := range removalInfo {
+		if info.Element == c.chunkElement {
+			// Items were removed from our current chunk, adjust our index
+			// Since expired items are removed from the beginning and the chunk is compacted,
+			// we need to shift our index back by the number of removed items
+			c.indexInChunk -= info.RemovedCount
+
+			// If our index is now negative or zero, we're at the beginning of the chunk
+			if c.indexInChunk < 0 {
+				c.indexInChunk = 0
+			}
+			break
+		}
 	}
 
 	// If the consumer is reading from expired chunks, update position
@@ -367,14 +383,14 @@ func (cm *ConsumerManager) GetAllConsumers() []*Consumer {
 }
 
 // NotifyAllConsumersOfExpiration notifies all consumers about expired items
-func (cm *ConsumerManager) NotifyAllConsumersOfExpiration(expiredCounts map[string]int, newFirstElement *list.Element) {
+func (cm *ConsumerManager) NotifyAllConsumersOfExpiration(expiredCounts map[string]int, newFirstElement *list.Element, removalInfo []ChunkRemovalInfo) {
 	cm.mutex.RLock()
 	defer cm.mutex.RUnlock()
 
 	for consumerID, consumer := range cm.consumers {
 		if expiredCount, hasExpired := expiredCounts[consumerID]; hasExpired && expiredCount > 0 {
 			consumer.NotifyExpiredItems(expiredCount)
-			consumer.UpdatePositionAfterExpiration(expiredCount, newFirstElement)
+			consumer.UpdatePositionAfterExpiration(expiredCount, newFirstElement, removalInfo)
 		}
 	}
 }

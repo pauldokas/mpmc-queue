@@ -260,16 +260,21 @@ func (q *Queue) cleanupExpiredItems() int {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 
+	// Check if expiration is enabled
+	if !q.expirationEnabled {
+		return 0
+	}
+
 	// Calculate expired counts for each consumer before cleanup
 	expiredCounts := q.calculateExpiredCountsPerConsumer()
 
 	// Remove expired items
-	expiredCount := q.data.RemoveExpiredData(q.ttl)
+	expiredCount, removalInfo := q.data.RemoveExpiredData(q.ttl)
 
 	if expiredCount > 0 {
 		// Notify consumers about expired items
 		newFirstElement := q.data.GetFirstElement()
-		q.consumers.NotifyAllConsumersOfExpiration(expiredCounts, newFirstElement)
+		q.consumers.NotifyAllConsumersOfExpiration(expiredCounts, newFirstElement, removalInfo)
 	}
 
 	return expiredCount
