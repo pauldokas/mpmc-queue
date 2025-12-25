@@ -161,6 +161,14 @@ func (c *Consumer) HasMoreData() bool {
 		return hasData
 	}
 
+	// Need to hold queue lock to safely access list structure
+	c.queue.mutex.RLock()
+	defer c.queue.mutex.RUnlock()
+
+	if c.chunkElement == nil {
+		return false
+	}
+
 	// Check current chunk
 	chunk := c.chunkElement.Value.(*ChunkNode)
 	if c.indexInChunk < chunk.GetSize() {
@@ -239,6 +247,7 @@ func (c *Consumer) NotifyExpiredItems(count int) {
 
 // UpdatePositionAfterExpiration updates the consumer's position after items are expired
 // This is called by the queue when items are removed due to expiration
+// NOTE: This must be called while holding queue.mutex to safely traverse the list
 func (c *Consumer) UpdatePositionAfterExpiration(expiredCount int, newFirstElement *list.Element) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
@@ -254,6 +263,7 @@ func (c *Consumer) UpdatePositionAfterExpiration(expiredCount int, newFirstEleme
 		stillValid := false
 
 		// Walk through remaining chunks to see if our position is still valid
+		// NOTE: We rely on the caller holding queue.mutex for safe list traversal
 		for element := newFirstElement; element != nil; element = element.Next() {
 			if element == currentElement {
 				stillValid = true
