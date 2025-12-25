@@ -5,39 +5,44 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 ## Priority 0 - Critical Issues
 
 ### Fix Race Condition in AddEvent
-- **Status**: ⚠️ Not Started
+- **Status**: ✅ Completed (commit: 144bf05)
 - **Problem**: Tests crash with `SIGSEGV` during race detection
 - **Root Cause**: `consumer.go:89` calls `data.AddEvent()` without synchronization, potentially growing a slice concurrently
 - **Impact**: Production-blocking bug, potential data corruption
-- **Solutions**:
-  - Option 1: Make Events append thread-safe with mutex in QueueData
-  - Option 2: Pre-allocate event capacity and document as unsafe after Enqueue
-  - Option 3: Make QueueData.Events immutable after enqueue (recommended)
+- **Solution Implemented**: Made QueueData.Events immutable after enqueue (Option 3)
+  - Changed `Events []QueueEvent` to single `EnqueueEvent QueueEvent`
+  - Removed `AddEvent()` method completely
+  - Added `DequeueRecord` tracking in each Consumer with `GetDequeueHistory()`
+  - All tests pass with race detection enabled
 - **Files**: `queue/data.go`, `queue/consumer.go`
 
 ### Fix Memory Tracking Inaccuracy
-- **Status**: ⚠️ Not Started
+- **Status**: ✅ Completed (commit: 144bf05)
 - **Problem**: Memory estimation doesn't track dequeue event additions to existing `QueueData.Events` slice
 - **Impact**: Actual memory usage exceeds tracked memory, potentially breaking the 1MB limit
-- **Solution**: Update memory tracking when events are added, or freeze `QueueData` after creation
+- **Solution Implemented**: QueueData is now immutable, so memory size is fixed after creation
+  - Updated `EstimateQueueDataSize()` to calculate single enqueue event
+  - Memory tracking is now accurate and doesn't change after enqueue
 - **Files**: `queue/memory.go`, `queue/data.go`
 
 ## Priority 1 - High Priority
 
 ### Use Modern Go Idioms
-- **Status**: ⚠️ Not Started
+- **Status**: ✅ Completed (commit: 512208d)
 - **Task**: Replace `interface{}` with `any` (Go 1.18+)
 - **Impact**: Improves code readability, follows modern Go conventions
-- **Files**: 
-  - `queue/data.go` - `Payload interface{}`
-  - `queue/queue.go` - `Enqueue(payload interface{})`
-  - `queue/queue.go` - `EnqueueBatch(payloads []interface{})`
-  - `tests/*.go` - All test files with `interface{}` usage
+- **Completed Changes**: 
+  - `queue/data.go` - `Payload any`
+  - `queue/queue.go` - `Enqueue(payload any)`
+  - `queue/queue.go` - `EnqueueBatch(payloads []any)`
+  - `queue/memory.go` - `estimatePayloadSize(payload any)`
+  - `tests/*.go` - All test files updated to use `any`
+  - `examples/basic_usage.go` - Updated to use `any`
 
 ### Fix go.mod Dependencies
-- **Status**: ⚠️ Not Started
+- **Status**: ✅ Completed (commit: 6cf6ecf)
 - **Task**: Make `github.com/google/uuid` a direct dependency
-- **Command**: `go mod tidy` and remove `// indirect` comment
+- **Completed**: Ran `go mod tidy` to mark as direct dependency
 - **Files**: `go.mod`
 
 ### Add Context Support
@@ -285,7 +290,24 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 
 ## Completed Items
 
-_No items completed yet_
+### ✅ Fix Race Condition in AddEvent (commit: 144bf05)
+- Made QueueData immutable after creation
+- Eliminated SIGSEGV crashes during concurrent dequeue operations
+- All tests pass with race detection
+
+### ✅ Fix Memory Tracking Inaccuracy (commit: 144bf05)  
+- Memory size is now fixed after QueueData creation
+- Accurate tracking without runtime changes
+
+### ✅ Use Modern Go Idioms (commit: 512208d)
+- Replaced all `interface{}` with `any` throughout codebase
+- Updated 6 files across queue package, tests, and examples
+
+### ✅ Fix go.mod Dependencies (commit: 6cf6ecf)
+- Made github.com/google/uuid a direct dependency
+
+### ✅ Add Project Documentation (commit: e6e8ca6)
+- Added AGENTS.md, RACE_CONDITION_FIX_STRATEGY.md, TODO.md
 
 ---
 
