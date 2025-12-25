@@ -58,6 +58,11 @@ func (c *Consumer) GetPosition() (*list.Element, int) {
 	return c.chunkElement, c.indexInChunk
 }
 
+// getPositionUnsafe returns position without locking (caller must hold consumer lock)
+func (c *Consumer) getPositionUnsafe() (*list.Element, int) {
+	return c.chunkElement, c.indexInChunk
+}
+
 // SetPosition sets the consumer's position (used for initialization)
 func (c *Consumer) SetPosition(element *list.Element, index int) {
 	c.mutex.Lock()
@@ -69,11 +74,12 @@ func (c *Consumer) SetPosition(element *list.Element, index int) {
 // Read reads the next available data item for this consumer
 // Returns nil if no data is available
 func (c *Consumer) Read() *QueueData {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
 	// Initialize position if this is the first read
-	if c.chunkElement == nil {
+	c.mutex.Lock()
+	needsInit := c.chunkElement == nil
+	c.mutex.Unlock()
+
+	if needsInit {
 		c.queue.mutex.RLock()
 		firstElement := c.queue.data.GetFirstElement()
 		c.queue.mutex.RUnlock()
@@ -82,52 +88,79 @@ func (c *Consumer) Read() *QueueData {
 			return nil // No data available
 		}
 
+		c.mutex.Lock()
 		c.chunkElement = firstElement
 		c.indexInChunk = 0
+		c.mutex.Unlock()
 	}
 
 	// Try to read from current position
-	for c.chunkElement != nil {
-		// Access chunk safely with read lock
+	for {
+		c.mutex.Lock()
+		currentElement := c.chunkElement
+		currentIndex := c.indexInChunk
+		c.mutex.Unlock()
+
+		if currentElement == nil {
+			return nil
+		}
+
+		// Access chunk safely with read lock (no consumer lock held)
 		c.queue.mutex.RLock()
-		if c.chunkElement == nil {
+		if currentElement == nil {
 			c.queue.mutex.RUnlock()
 			return nil
 		}
-		chunk := c.chunkElement.Value.(*ChunkNode)
+		chunk := currentElement.Value.(*ChunkNode)
 		chunkSize := chunk.GetSize()
 		c.queue.mutex.RUnlock()
 
-		if c.indexInChunk < chunkSize {
-			data := chunk.Get(c.indexInChunk)
+		if currentIndex < chunkSize {
+			data := chunk.Get(currentIndex)
 			if data != nil {
-				// Record dequeue event locally (no modification to shared data)
-				c.dequeueHistory = append(c.dequeueHistory, DequeueRecord{
-					DataID:    data.ID,
-					Timestamp: time.Now(),
-				})
-
-				// Move to next position
-				c.indexInChunk++
-				c.lastReadTime = time.Now()
-				c.totalItemsRead++
-
-				return data
+				// Record dequeue and update position atomically
+				c.mutex.Lock()
+				// Double-check position hasn't changed (expiration could have updated it)
+				if c.chunkElement == currentElement && c.indexInChunk == currentIndex {
+					c.dequeueHistory = append(c.dequeueHistory, DequeueRecord{
+						DataID:    data.ID,
+						Timestamp: time.Now(),
+					})
+					c.indexInChunk++
+					c.lastReadTime = time.Now()
+					c.totalItemsRead++
+					c.mutex.Unlock()
+					return data
+				}
+				c.mutex.Unlock()
+				// Position changed, retry from new position
+				continue
 			}
 			// Skip nil items
-			c.indexInChunk++
+			c.mutex.Lock()
+			if c.chunkElement == currentElement && c.indexInChunk == currentIndex {
+				c.indexInChunk++
+			}
+			c.mutex.Unlock()
 		} else {
 			// Move to next chunk - need lock to safely navigate list
 			c.queue.mutex.RLock()
-			if c.chunkElement != nil {
-				c.chunkElement = c.chunkElement.Next()
-			}
+			nextElement := currentElement.Next()
 			c.queue.mutex.RUnlock()
-			c.indexInChunk = 0
+
+			c.mutex.Lock()
+			// Only update if position hasn't changed
+			if c.chunkElement == currentElement && c.indexInChunk == currentIndex {
+				c.chunkElement = nextElement
+				c.indexInChunk = 0
+			}
+			c.mutex.Unlock()
+
+			if nextElement == nil {
+				return nil
+			}
 		}
 	}
-
-	return nil // No more data available
 }
 
 // ReadBatch reads multiple items up to the specified limit

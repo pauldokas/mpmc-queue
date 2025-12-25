@@ -281,13 +281,19 @@ func (q *Queue) cleanupExpiredItems() int {
 }
 
 // calculateExpiredCountsPerConsumer calculates how many unread items will be expired for each consumer
+// NOTE: Must be called while holding queue.mutex.Lock()
 func (q *Queue) calculateExpiredCountsPerConsumer() map[string]int {
 	expiredCounts := make(map[string]int)
 
 	consumers := q.consumers.GetAllConsumers()
 
 	for _, consumer := range consumers {
-		chunkElement, indexInChunk := consumer.GetPosition()
+		// Access position without locking to avoid deadlock
+		// We're already holding queue.mutex which protects the chunk structure
+		// Consumer's mutex only protects its position fields, which we read directly
+		consumer.mutex.Lock()
+		chunkElement, indexInChunk := consumer.getPositionUnsafe()
+		consumer.mutex.Unlock()
 
 		if chunkElement == nil {
 			// Consumer hasn't started reading, count all expired items

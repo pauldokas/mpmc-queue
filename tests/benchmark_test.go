@@ -251,12 +251,20 @@ func TestHighThroughputStress(t *testing.T) {
 			consumer := q.AddConsumer()
 			count := 0
 			start := time.Now()
+			emptyReads := 0
+			const maxEmptyReads = 100 // Exit after 100 consecutive empty reads
 
 			for time.Since(start) < testDuration+5*time.Second {
 				data := consumer.Read()
 				if data != nil {
 					count++
+					emptyReads = 0 // Reset counter on successful read
 				} else {
+					emptyReads++
+					if emptyReads >= maxEmptyReads {
+						// Queue appears empty and producers are done
+						break
+					}
 					time.Sleep(time.Millisecond)
 				}
 			}
