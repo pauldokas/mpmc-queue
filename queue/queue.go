@@ -305,7 +305,8 @@ func (q *Queue) countExpiredItemsFromBeginning() int {
 
 	for element != nil {
 		chunk := q.data.GetChunk(element)
-		for i := 0; i < chunk.Size; i++ {
+		chunkSize := chunk.GetSize()
+		for i := 0; i < chunkSize; i++ {
 			data := chunk.Get(i)
 			if data != nil && data.IsExpired(q.ttl) {
 				count++
@@ -327,8 +328,9 @@ func (q *Queue) countExpiredItemsFromPosition(startElement *list.Element, startI
 
 	for element != nil {
 		chunk := q.data.GetChunk(element)
+		chunkSize := chunk.GetSize()
 
-		for i := index; i < chunk.Size; i++ {
+		for i := index; i < chunkSize; i++ {
 			data := chunk.Get(i)
 			if data != nil && data.IsExpired(q.ttl) {
 				count++

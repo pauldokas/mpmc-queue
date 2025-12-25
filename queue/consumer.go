@@ -88,9 +88,17 @@ func (c *Consumer) Read() *QueueData {
 
 	// Try to read from current position
 	for c.chunkElement != nil {
+		// Access chunk safely with read lock
+		c.queue.mutex.RLock()
+		if c.chunkElement == nil {
+			c.queue.mutex.RUnlock()
+			return nil
+		}
 		chunk := c.chunkElement.Value.(*ChunkNode)
+		chunkSize := chunk.GetSize()
+		c.queue.mutex.RUnlock()
 
-		if c.indexInChunk < chunk.Size {
+		if c.indexInChunk < chunkSize {
 			data := chunk.Get(c.indexInChunk)
 			if data != nil {
 				// Record dequeue event locally (no modification to shared data)
@@ -109,8 +117,12 @@ func (c *Consumer) Read() *QueueData {
 			// Skip nil items
 			c.indexInChunk++
 		} else {
-			// Move to next chunk
-			c.chunkElement = c.chunkElement.Next()
+			// Move to next chunk - need lock to safely navigate list
+			c.queue.mutex.RLock()
+			if c.chunkElement != nil {
+				c.chunkElement = c.chunkElement.Next()
+			}
+			c.queue.mutex.RUnlock()
 			c.indexInChunk = 0
 		}
 	}
@@ -151,7 +163,7 @@ func (c *Consumer) HasMoreData() bool {
 
 	// Check current chunk
 	chunk := c.chunkElement.Value.(*ChunkNode)
-	if c.indexInChunk < chunk.Size {
+	if c.indexInChunk < chunk.GetSize() {
 		return true
 	}
 

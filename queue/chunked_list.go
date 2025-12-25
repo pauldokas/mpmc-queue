@@ -8,17 +8,17 @@ import (
 
 // ChunkedList wraps container/list to provide chunked storage of QueueData
 type ChunkedList struct {
-	list         *list.List
+	list          *list.List
 	memoryTracker *MemoryTracker
-	totalItems   int64
+	totalItems    int64
 }
 
 // NewChunkedList creates a new chunked list
 func NewChunkedList(memoryTracker *MemoryTracker) *ChunkedList {
 	return &ChunkedList{
-		list:         list.New(),
+		list:          list.New(),
 		memoryTracker: memoryTracker,
-		totalItems:   0,
+		totalItems:    0,
 	}
 }
 
@@ -31,11 +31,11 @@ func (cl *ChunkedList) Enqueue(data *QueueData) error {
 			Needed:  cl.memoryTracker.EstimateQueueDataSize(data),
 		}
 	}
-	
+
 	// Get or create the last chunk
 	var lastChunk *ChunkNode
 	var lastElement *list.Element
-	
+
 	if cl.list.Len() == 0 {
 		// Create first chunk
 		lastChunk = NewChunkNode()
@@ -44,7 +44,7 @@ func (cl *ChunkedList) Enqueue(data *QueueData) error {
 	} else {
 		lastElement = cl.list.Back()
 		lastChunk = lastElement.Value.(*ChunkNode)
-		
+
 		if lastChunk.IsFull() {
 			// Create new chunk
 			lastChunk = NewChunkNode()
@@ -52,14 +52,14 @@ func (cl *ChunkedList) Enqueue(data *QueueData) error {
 			cl.memoryTracker.AddChunk()
 		}
 	}
-	
+
 	// Add data to the chunk
 	if lastChunk.Add(data) {
 		cl.memoryTracker.AddData(data)
 		cl.totalItems++
 		return nil
 	}
-	
+
 	return &QueueError{Message: "Failed to add data to chunk"}
 }
 
@@ -90,13 +90,13 @@ func (cl *ChunkedList) GetChunk(element *list.Element) *ChunkNode {
 // Returns the total number of items removed
 func (cl *ChunkedList) RemoveExpiredData(ttl time.Duration) int {
 	totalRemoved := 0
-	
+
 	// Start from the front (oldest data)
 	element := cl.list.Front()
 	for element != nil {
 		chunk := element.Value.(*ChunkNode)
 		removedFromChunk := chunk.RemoveExpired(ttl)
-		
+
 		if removedFromChunk > 0 {
 			// Update memory tracking
 			for i := 0; i < removedFromChunk; i++ {
@@ -106,17 +106,17 @@ func (cl *ChunkedList) RemoveExpiredData(ttl time.Duration) int {
 			}
 			totalRemoved += removedFromChunk
 		}
-		
+
 		nextElement := element.Next()
-		
+
 		// Remove empty chunks
 		if chunk.IsEmpty() {
 			cl.list.Remove(element)
 			cl.memoryTracker.RemoveChunk()
 		}
-		
+
 		element = nextElement
-		
+
 		// If this chunk still has non-expired items, we can stop
 		// (since items are ordered by creation time)
 		if !chunk.IsEmpty() {
@@ -126,7 +126,7 @@ func (cl *ChunkedList) RemoveExpiredData(ttl time.Duration) int {
 			}
 		}
 	}
-	
+
 	return totalRemoved
 }
 
@@ -154,11 +154,12 @@ func (cl *ChunkedList) GetMemoryUsage() int64 {
 func (cl *ChunkedList) IterateFrom(element *list.Element, indexInChunk int, callback func(*QueueData, *list.Element, int) bool) {
 	currentElement := element
 	currentIndex := indexInChunk
-	
+
 	for currentElement != nil {
 		chunk := currentElement.Value.(*ChunkNode)
-		
-		for i := currentIndex; i < chunk.Size; i++ {
+		chunkSize := chunk.GetSize()
+
+		for i := currentIndex; i < chunkSize; i++ {
 			data := chunk.Get(i)
 			if data != nil {
 				if !callback(data, currentElement, i) {
@@ -166,7 +167,7 @@ func (cl *ChunkedList) IterateFrom(element *list.Element, indexInChunk int, call
 				}
 			}
 		}
-		
+
 		currentElement = currentElement.Next()
 		currentIndex = 0 // Reset index for subsequent chunks
 	}
@@ -175,12 +176,12 @@ func (cl *ChunkedList) IterateFrom(element *list.Element, indexInChunk int, call
 // CountItemsFrom counts items from a specific position to the end
 func (cl *ChunkedList) CountItemsFrom(element *list.Element, indexInChunk int) int64 {
 	var count int64 = 0
-	
+
 	cl.IterateFrom(element, indexInChunk, func(data *QueueData, element *list.Element, index int) bool {
 		count++
 		return true
 	})
-	
+
 	return count
 }
 
