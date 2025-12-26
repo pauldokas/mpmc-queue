@@ -447,14 +447,17 @@ go test ./tests -run TestExtreme -v
 ## Changelog
 
 ### v1.0.0 (Current - Production Ready)
-- ✅ All critical bugs fixed (10 total)
+- ✅ All critical bugs fixed (13 total)
 - ✅ Race-condition free (verified with extensive testing)
+- ✅ Lock ordering violations fixed (snapshot pattern implementation)
+- ✅ TOCTOU issues resolved (proper lock holding during reads)
+- ✅ Test race conditions fixed (atomic operations for shared counters)
 - ✅ Memory leak fixed (proper cleanup on expiration)
 - ✅ Immutable QueueData (thread-safe without locks)
 - ✅ Atomic ChunkNode.Size (lock-free access)
 - ✅ Position tracking fixed (accurate during expiration)
 - ✅ Modern Go idioms (interface{} → any)
-- ✅ Comprehensive documentation (5 docs files)
+- ✅ Comprehensive documentation (5 docs files, updated)
 - ✅ Extensive test coverage (15 test files, 1400+ lines)
 
 See [TODO.md](TODO.md) for detailed bug fix history and commit references.

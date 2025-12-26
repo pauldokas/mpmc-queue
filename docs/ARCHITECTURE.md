@@ -253,9 +253,33 @@ Queue (root)
 ```
 
 **Deadlock Prevention:**
-- Consistent lock ordering
+- Consistent lock ordering: queue → consumer (never consumer → queue)
 - Never acquire outer lock while holding inner
 - Read locks don't block other readers
+- **Snapshot Pattern**: Consumer methods snapshot state before acquiring queue lock
+
+**Critical Pattern - Snapshot Before Queue Lock:**
+```go
+// Consumer methods that need queue data
+c.mutex.Lock()
+chunkElement := c.chunkElement  // Snapshot
+indexInChunk := c.indexInChunk
+c.mutex.Unlock()
+
+// Now safe to acquire queue lock
+c.queue.mutex.RLock()
+// Use snapshots: chunkElement, indexInChunk
+c.queue.mutex.RUnlock()
+```
+
+**Methods Using Snapshot Pattern:**
+- `Consumer.Read()` - Fine-grained locking with position snapshots
+- `Consumer.HasMoreData()` - Snapshots before queue access
+- `Consumer.GetUnreadCount()` - Snapshots position fields
+- `Consumer.GetStats()` - Snapshots all consumer state
+
+**TOCTOU Protection:**
+Consumer.Read() keeps queue lock held during chunk.Get() to prevent time-of-check-to-time-of-use issues with expiration modifying chunks.
 
 ---
 
@@ -431,19 +455,31 @@ q.mutex.Lock()              // Exclusive access
 q.mutex.Unlock()
 ```
 
-**Rule 2: Consumer Lock for Position**
+**Rule 2: Consumer Lock for Position (Snapshot Pattern)**
 ```go
-// Consumer.Read()
-c.mutex.Lock()              // Lock consumer state
-  c.queue.mutex.RLock()     // Brief read lock for chunk access
-    chunk = c.chunkElement.Value.(*ChunkNode)
-    size = chunk.GetSize()  // Atomic read
-  c.queue.mutex.RUnlock()   // Release immediately
-  
-  data = chunk.Get(index)   // Access without lock (safe via atomics)
-  c.indexInChunk++          // Update position (protected by c.mutex)
+// Consumer.Read() - Updated implementation
+c.mutex.Lock()
+currentElement := c.chunkElement  // Snapshot position
+currentIndex := c.indexInChunk
+c.mutex.Unlock()
+
+// Now safe to acquire queue lock
+c.queue.mutex.RLock()
+  chunk = currentElement.Value.(*ChunkNode)
+  size = chunk.GetSize()           // Atomic read
+  data = chunk.Get(currentIndex)   // Read while holding queue lock (TOCTOU protection)
+c.queue.mutex.RUnlock()
+
+// Update position with double-check
+c.mutex.Lock()
+if c.chunkElement == currentElement && c.indexInChunk == currentIndex {
+  c.indexInChunk++  // Position hasn't changed, safe to update
+}
 c.mutex.Unlock()
 ```
+
+**TOCTOU Protection:**
+The queue lock must be held during `chunk.Get()` to prevent expiration from modifying the chunk between the size check and data read.
 
 **Rule 3: Never Hold Both**
 ```go

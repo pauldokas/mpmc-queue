@@ -67,8 +67,16 @@ func TestConsumerPositionAfterPartialExpiration(t *testing.T) {
 	q := queue.NewQueueWithTTL("position-test", 100*time.Millisecond)
 	defer q.Close()
 
-	// Enqueue 20 items
-	for i := 0; i < 20; i++ {
+	// Enqueue first 5 items
+	for i := 0; i < 5; i++ {
+		q.Enqueue(i)
+	}
+
+	// Wait a bit to ensure these items have different creation times
+	time.Sleep(20 * time.Millisecond)
+
+	// Enqueue remaining 15 items (these will be newer)
+	for i := 5; i < 20; i++ {
 		q.Enqueue(i)
 	}
 
@@ -84,10 +92,10 @@ func TestConsumerPositionAfterPartialExpiration(t *testing.T) {
 		}
 	}
 
-	// Wait for first 5 items to expire
-	time.Sleep(150 * time.Millisecond)
+	// Wait for first 5 items to expire (100ms TTL + 20ms already elapsed)
+	time.Sleep(90 * time.Millisecond)
 
-	// Force expiration (should remove first 5 items)
+	// Force expiration (should remove first 5 items only)
 	expiredCount := q.ForceExpiration()
 	if expiredCount != 5 {
 		t.Errorf("Expected 5 items to expire, got %d", expiredCount)
@@ -120,13 +128,17 @@ func TestConsumerReadingDuringExpiration(t *testing.T) {
 	q := queue.NewQueueWithTTL("read-during-expiration", 80*time.Millisecond)
 	defer q.Close()
 
-	// Enqueue items with delays to create staggered expiration
-	for i := 0; i < 10; i++ {
+	// Enqueue first 5 items
+	for i := 0; i < 5; i++ {
 		q.Enqueue(i)
-		if i == 4 {
-			// Create a gap - first 5 items will expire before the rest
-			time.Sleep(100 * time.Millisecond)
-		}
+	}
+
+	// Create a time gap - first 5 items will expire before the rest
+	time.Sleep(100 * time.Millisecond)
+
+	// Enqueue remaining 5 items (these are fresh)
+	for i := 5; i < 10; i++ {
+		q.Enqueue(i)
 	}
 
 	consumer := q.AddConsumer()
@@ -139,29 +151,26 @@ func TestConsumerReadingDuringExpiration(t *testing.T) {
 		}
 	}
 
-	// Wait for first batch to expire
-	time.Sleep(50 * time.Millisecond)
-	q.ForceExpiration()
+	// Force expiration - first 5 items should expire
+	expiredCount := q.ForceExpiration()
+	if expiredCount != 5 {
+		t.Errorf("Expected 5 items to expire, got %d", expiredCount)
+	}
 
-	// Consumer should still read items 3, 4 correctly (before the gap)
+	// Consumer was at position 3, but items 0-4 expired
+	// So the consumer should now continue from item 5 (the first non-expired item)
+	// But the consumer already read 0, 1, 2, so it should be positioned to read what comes after its last read
+	// Since items 3 and 4 were removed, the next available item is 5
 	data := consumer.Read()
 	if data == nil {
-		t.Fatal("Expected to read item 3")
+		t.Fatal("Expected to read item 5 (first non-expired)")
 	}
-	if data.Payload != 3 {
-		t.Errorf("Expected item 3, got %v", data.Payload)
-	}
-
-	data = consumer.Read()
-	if data == nil {
-		t.Fatal("Expected to read item 4")
-	}
-	if data.Payload != 4 {
-		t.Errorf("Expected item 4, got %v", data.Payload)
+	if data.Payload != 5 {
+		t.Errorf("Expected item 5, got %v", data.Payload)
 	}
 
-	// Continue with newer items that didn't expire
-	for i := 5; i < 10; i++ {
+	// Continue with remaining items
+	for i := 6; i < 10; i++ {
 		data := consumer.Read()
 		if data == nil {
 			t.Fatalf("Failed to read item %d", i)
@@ -174,11 +183,19 @@ func TestConsumerReadingDuringExpiration(t *testing.T) {
 
 // TestMultipleConsumersAfterExpiration verifies all consumers are correctly adjusted
 func TestMultipleConsumersAfterExpiration(t *testing.T) {
-	q := queue.NewQueueWithTTL("multi-consumer-expiration", 50*time.Millisecond)
+	q := queue.NewQueueWithTTL("multi-consumer-expiration", 100*time.Millisecond)
 	defer q.Close()
 
-	// Enqueue 15 items
-	for i := 0; i < 15; i++ {
+	// Enqueue first 5 items that will be old
+	for i := 0; i < 5; i++ {
+		q.Enqueue(i)
+	}
+
+	// Wait to create age difference
+	time.Sleep(50 * time.Millisecond)
+
+	// Enqueue remaining 10 items (newer)
+	for i := 5; i < 15; i++ {
 		q.Enqueue(i)
 	}
 
@@ -187,40 +204,42 @@ func TestMultipleConsumersAfterExpiration(t *testing.T) {
 	consumer2 := q.AddConsumer()
 	consumer3 := q.AddConsumer()
 
-	// Consumer 1 reads 2 items
+	// Consumer 1 reads 2 items (0, 1)
 	consumer1.Read() // 0
 	consumer1.Read() // 1
 
-	// Consumer 2 reads 5 items
+	// Consumer 2 reads 5 items (0-4)
 	for i := 0; i < 5; i++ {
 		consumer2.Read()
 	}
 
-	// Consumer 3 reads 10 items
+	// Consumer 3 reads 10 items (0-9)
 	for i := 0; i < 10; i++ {
 		consumer3.Read()
 	}
 
-	// Wait and expire first 5 items
-	time.Sleep(100 * time.Millisecond)
+	// Wait for first 5 items to expire (50ms already passed + 60ms = 110ms > 100ms TTL)
+	time.Sleep(60 * time.Millisecond)
 	expiredCount := q.ForceExpiration()
 	if expiredCount != 5 {
 		t.Errorf("Expected 5 items to expire, got %d", expiredCount)
 	}
 
-	// Consumer 1 (was at index 2) should now read item 2 (not expired)
+	// Consumer 1 was at position 2, but items 0-4 expired
+	// Items 2, 3, 4 were removed before consumer could read them
+	// Next available item is 5
 	data := consumer1.Read()
-	if data == nil || data.Payload != 2 {
-		t.Errorf("Consumer 1: expected item 2, got %v", data)
+	if data == nil || data.Payload != 5 {
+		t.Errorf("Consumer 1: expected item 5 (first non-expired), got %v", data)
 	}
 
-	// Consumer 2 (was at index 5) should now read item 5
+	// Consumer 2 was at position 5, which is the first non-expired item
 	data = consumer2.Read()
 	if data == nil || data.Payload != 5 {
 		t.Errorf("Consumer 2: expected item 5, got %v", data)
 	}
 
-	// Consumer 3 (was at index 10) should now read item 10
+	// Consumer 3 was at position 10, unaffected by expiration
 	data = consumer3.Read()
 	if data == nil || data.Payload != 10 {
 		t.Errorf("Consumer 3: expected item 10, got %v", data)

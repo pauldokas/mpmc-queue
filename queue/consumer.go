@@ -106,6 +106,7 @@ func (c *Consumer) Read() *QueueData {
 		}
 
 		// Access chunk safely with read lock (no consumer lock held)
+		// Keep queue lock held while reading data to prevent TOCTOU issues with expiration
 		c.queue.mutex.RLock()
 		if currentElement == nil {
 			c.queue.mutex.RUnlock()
@@ -113,10 +114,12 @@ func (c *Consumer) Read() *QueueData {
 		}
 		chunk := currentElement.Value.(*ChunkNode)
 		chunkSize := chunk.GetSize()
-		c.queue.mutex.RUnlock()
 
 		if currentIndex < chunkSize {
+			// Read data while holding queue lock to ensure consistency
 			data := chunk.Get(currentIndex)
+			c.queue.mutex.RUnlock()
+
 			if data != nil {
 				// Record dequeue and update position atomically
 				c.mutex.Lock()
@@ -144,7 +147,6 @@ func (c *Consumer) Read() *QueueData {
 			c.mutex.Unlock()
 		} else {
 			// Move to next chunk - need lock to safely navigate list
-			c.queue.mutex.RLock()
 			nextElement := currentElement.Next()
 			c.queue.mutex.RUnlock()
 
@@ -184,10 +186,13 @@ func (c *Consumer) ReadBatch(limit int) []*QueueData {
 
 // HasMoreData checks if there's more data available for this consumer
 func (c *Consumer) HasMoreData() bool {
+	// Read position without holding lock to avoid lock ordering issues
 	c.mutex.Lock()
-	defer c.mutex.Unlock()
+	chunkElement := c.chunkElement
+	indexInChunk := c.indexInChunk
+	c.mutex.Unlock()
 
-	if c.chunkElement == nil {
+	if chunkElement == nil {
 		c.queue.mutex.RLock()
 		hasData := !c.queue.data.IsEmpty()
 		c.queue.mutex.RUnlock()
@@ -198,26 +203,29 @@ func (c *Consumer) HasMoreData() bool {
 	c.queue.mutex.RLock()
 	defer c.queue.mutex.RUnlock()
 
-	if c.chunkElement == nil {
+	if chunkElement == nil {
 		return false
 	}
 
 	// Check current chunk
-	chunk := c.chunkElement.Value.(*ChunkNode)
-	if c.indexInChunk < chunk.GetSize() {
+	chunk := chunkElement.Value.(*ChunkNode)
+	if indexInChunk < chunk.GetSize() {
 		return true
 	}
 
 	// Check if there are more chunks
-	return c.chunkElement.Next() != nil
+	return chunkElement.Next() != nil
 }
 
 // GetUnreadCount returns the number of unread items for this consumer
 func (c *Consumer) GetUnreadCount() int64 {
+	// Read position without holding lock to avoid lock ordering issues
 	c.mutex.Lock()
-	defer c.mutex.Unlock()
+	chunkElement := c.chunkElement
+	indexInChunk := c.indexInChunk
+	c.mutex.Unlock()
 
-	if c.chunkElement == nil {
+	if chunkElement == nil {
 		c.queue.mutex.RLock()
 		totalItems := c.queue.data.GetTotalItems()
 		c.queue.mutex.RUnlock()
@@ -225,7 +233,7 @@ func (c *Consumer) GetUnreadCount() int64 {
 	}
 
 	c.queue.mutex.RLock()
-	unreadCount := c.queue.data.CountItemsFrom(c.chunkElement, c.indexInChunk)
+	unreadCount := c.queue.data.CountItemsFrom(chunkElement, indexInChunk)
 	c.queue.mutex.RUnlock()
 
 	return unreadCount
@@ -233,26 +241,32 @@ func (c *Consumer) GetUnreadCount() int64 {
 
 // GetStats returns consumer statistics
 func (c *Consumer) GetStats() ConsumerStats {
+	// Read consumer state without holding lock to avoid lock ordering issues
 	c.mutex.Lock()
-	defer c.mutex.Unlock()
+	id := c.id
+	totalItemsRead := c.totalItemsRead
+	lastReadTime := c.lastReadTime
+	chunkElement := c.chunkElement
+	indexInChunk := c.indexInChunk
+	c.mutex.Unlock()
 
-	// Calculate unread count without additional locking
+	// Calculate unread count
 	var unreadCount int64
-	if c.chunkElement == nil {
+	if chunkElement == nil {
 		c.queue.mutex.RLock()
 		unreadCount = c.queue.data.GetTotalItems()
 		c.queue.mutex.RUnlock()
 	} else {
 		c.queue.mutex.RLock()
-		unreadCount = c.queue.data.CountItemsFrom(c.chunkElement, c.indexInChunk)
+		unreadCount = c.queue.data.CountItemsFrom(chunkElement, indexInChunk)
 		c.queue.mutex.RUnlock()
 	}
 
 	return ConsumerStats{
-		ID:             c.id,
-		TotalItemsRead: c.totalItemsRead,
+		ID:             id,
+		TotalItemsRead: totalItemsRead,
 		UnreadItems:    unreadCount,
-		LastReadTime:   c.lastReadTime,
+		LastReadTime:   lastReadTime,
 	}
 }
 
@@ -297,10 +311,12 @@ func (c *Consumer) UpdatePositionAfterExpiration(expiredCount int, newFirstEleme
 			// we need to shift our index back by the number of removed items
 			c.indexInChunk -= info.RemovedCount
 
-			// If our index is now negative or zero, we're at the beginning of the chunk
+			// If our index is now negative, we're trying to read items that expired
+			// Move to the beginning of the chunk (or next chunk if this one is empty)
 			if c.indexInChunk < 0 {
 				c.indexInChunk = 0
 			}
+
 			break
 		}
 	}
@@ -420,10 +436,22 @@ func (cm *ConsumerManager) NotifyAllConsumersOfExpiration(expiredCounts map[stri
 	cm.mutex.RLock()
 	defer cm.mutex.RUnlock()
 
+	// Calculate total expired items for position adjustment
+	totalExpired := 0
+	for _, info := range removalInfo {
+		totalExpired += info.RemovedCount
+	}
+
 	for consumerID, consumer := range cm.consumers {
+		// Notify consumers about their unread expired items
 		if expiredCount, hasExpired := expiredCounts[consumerID]; hasExpired && expiredCount > 0 {
 			consumer.NotifyExpiredItems(expiredCount)
-			consumer.UpdatePositionAfterExpiration(expiredCount, newFirstElement, removalInfo)
+		}
+
+		// ALWAYS update position if any items expired (even if consumer already read past them)
+		// This is necessary because chunk compaction affects all consumer positions
+		if totalExpired > 0 {
+			consumer.UpdatePositionAfterExpiration(totalExpired, newFirstElement, removalInfo)
 		}
 	}
 }

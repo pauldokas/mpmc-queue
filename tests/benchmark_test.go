@@ -3,6 +3,7 @@ package tests
 import (
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -218,7 +219,8 @@ func TestHighThroughputStress(t *testing.T) {
 	const testDuration = 30 * time.Second
 
 	var producerWg, consumerWg sync.WaitGroup
-	var totalProduced, totalConsumed int64
+	var totalProduced int64
+	var totalConsumed int64
 
 	// Start producers
 	producerWg.Add(numProducers)
@@ -239,7 +241,7 @@ func TestHighThroughputStress(t *testing.T) {
 				}
 				count++
 			}
-			totalProduced += int64(count)
+			atomic.AddInt64(&totalProduced, int64(count))
 		}(i)
 	}
 
@@ -268,7 +270,7 @@ func TestHighThroughputStress(t *testing.T) {
 					time.Sleep(time.Millisecond)
 				}
 			}
-			totalConsumed += int64(count)
+			atomic.AddInt64(&totalConsumed, int64(count))
 		}(i)
 	}
 
@@ -278,14 +280,14 @@ func TestHighThroughputStress(t *testing.T) {
 	stats := q.GetQueueStats()
 
 	t.Logf("Stress test results:")
-	t.Logf("  Total produced: %d", totalProduced)
-	t.Logf("  Total consumed: %d", totalConsumed)
+	t.Logf("  Total produced: %d", atomic.LoadInt64(&totalProduced))
+	t.Logf("  Total consumed: %d", atomic.LoadInt64(&totalConsumed))
 	t.Logf("  Items remaining: %d", stats.TotalItems)
 	t.Logf("  Memory usage: %d bytes (%.2f%%)", stats.MemoryUsage, stats.MemoryPercent)
 
 	// Each consumer should have processed all items
-	expectedPerConsumer := totalProduced
-	if totalConsumed < int64(numConsumers)*expectedPerConsumer {
+	expectedPerConsumer := atomic.LoadInt64(&totalProduced)
+	if atomic.LoadInt64(&totalConsumed) < int64(numConsumers)*expectedPerConsumer {
 		t.Logf("Note: Not all consumers processed all items (expected due to timing)")
 	}
 }

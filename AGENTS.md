@@ -1,118 +1,51 @@
 # Agent Development Guide for mpmc-queue
 
-This guide provides essential information for AI coding agents working on the mpmc-queue project - a high-performance, thread-safe multi-producer multi-consumer queue implementation in Go.
+Essential guide for AI coding agents working on mpmc-queue - a high-performance, thread-safe multi-producer multi-consumer queue in Go with 1MB memory limit, time-based expiration, and independent consumer tracking.
 
-## Project Overview
+## Quick Reference
 
-Multi-producer, multi-consumer queue with:
-- Thread-safe concurrent operations
-- 1MB memory limit with real-time tracking
-- Time-based expiration (10-minute default TTL)
-- Independent consumer position tracking
-- Chunked storage (1000 items per chunk using doubly-linked lists)
-- Comprehensive event tracking and statistics
+**Module**: `mpmc-queue` | **Go**: 1.25.1 | **Dependencies**: `github.com/google/uuid v1.6.0`
 
-## Build, Test, and Lint Commands
+**Key Files**: `queue/queue.go` (main ops) | `queue/consumer.go` (consumers) | `queue/data.go` (data types) | `queue/chunked_list.go` (storage) | `queue/memory.go` (tracking)
 
-### Running Tests
+**Critical Rules**: ALWAYS acquire queue lock before consumer lock | ALWAYS run tests with `-race` flag | NEVER modify QueueData after creation
 
+## Commands
+
+### Testing
 ```bash
-# Run all tests
-go test ./tests -v
-
-# Run all tests with race detection
-go test ./tests -v -race
-
-# Run a single specific test
-go test ./tests -v -run TestEnqueueDequeue
-
-# Run tests matching a pattern
-go test ./tests -v -run "TestMultiple.*"
-
-# Run tests in a specific file (use pattern matching)
-go test ./tests -v -run TestExpiration  # Tests in expiration_test.go
-
-# Run benchmarks
-go test ./tests -bench=. -v
-
-# Run benchmarks with memory stats
-go test ./tests -bench=. -benchmem -v
-
-# Run specific benchmark
-go test ./tests -bench=BenchmarkEnqueue -v
+go test ./tests -v                           # All tests
+go test ./tests -v -race                     # Race detection (ALWAYS USE)
+go test ./tests -v -run TestEnqueueDequeue  # Single test
+go test ./tests -v -run "TestMultiple.*"    # Pattern match
+go test ./tests -bench=. -benchmem -v       # Benchmarks with memory
 ```
 
-### Building
-
+### Building & Linting
 ```bash
-# Build all packages
-go build ./...
-
-# Build with race detection
-go build -race ./...
-
-# Verify module dependencies
-go mod verify
-
-# Tidy dependencies
-go mod tidy
+go build ./...        # Build all
+go build -race ./...  # Build with race detection
+go fmt ./...          # Format code
+go vet ./...          # Static analysis
+go mod tidy           # Clean dependencies
 ```
 
-### Linting and Formatting
-
+### Examples
 ```bash
-# Format all Go files
-go fmt ./...
-
-# Run go vet
-go vet ./...
-
-# Check for race conditions (run with tests)
-go test ./tests -race
-```
-
-### Running Examples
-
-```bash
-# Run basic usage example
 go run examples/basic_usage.go
-
-# Run advanced usage example
 go run examples/advanced_usage.go
 ```
 
-## Code Style Guidelines
+## Code Style
 
-### Package Structure
-
-```
-queue/          # Main package with all queue implementation
-├── queue.go          # Main Queue type and operations
-├── consumer.go       # Consumer and ConsumerManager types
-├── data.go          # QueueData, QueueEvent, ChunkNode types
-├── chunked_list.go  # ChunkedList implementation
-└── memory.go        # MemoryTracker and memory estimation
-
-tests/          # Test package
-├── queue_test.go
-├── expiration_test.go
-└── benchmark_test.go
-
-examples/       # Example programs (package main)
-```
-
-### Import Ordering
-
-Follow standard Go convention:
-1. Standard library imports
+### Import Order
+1. Standard library (alphabetical)
 2. External dependencies
-3. Internal packages
+3. Internal packages (`mpmc-queue/queue`)
 
 ```go
 import (
     "container/list"
-    "context"
-    "fmt"
     "sync"
     "time"
     
@@ -122,131 +55,117 @@ import (
 )
 ```
 
-### Naming Conventions
+### Naming
+- **Types/Exported**: `PascalCase` (Queue, Consumer, QueueData)
+- **Private functions**: `camelCase` (expirationWorker, cleanupExpiredItems)  
+- **Constants**: `PascalCase` (DefaultTTL, MaxQueueMemory)
 
-- **Types**: PascalCase (e.g., `Queue`, `Consumer`, `QueueData`)
-- **Exported functions**: PascalCase (e.g., `NewQueue`, `GetStats`)
-- **Private functions**: camelCase (e.g., `expirationWorker`, `cleanupExpiredItems`)
-- **Constants**: PascalCase (e.g., `DefaultTTL`, `MaxQueueMemory`)
-- **Interfaces**: `-er` suffix when appropriate (not heavily used in this codebase)
-
-### Constants
-
-Define package constants at the top of relevant files:
-
+### Documentation
+ALL exported types/functions MUST have godoc comments:
 ```go
-const (
-    // DefaultTTL is the default time-to-live for queue items (10 minutes)
-    DefaultTTL = 10 * time.Minute
-    
-    // ExpirationCheckInterval is how often to check for expired items
-    ExpirationCheckInterval = 30 * time.Second
-)
-```
-
-### Types and Structs
-
-- Use struct tags for JSON serialization: `json:"field_name"`
-- Add godoc comments for all exported types
-- Group related fields logically
-
-```go
-// QueueData represents a single item in the queue
-type QueueData struct {
-    ID      string        `json:"id"`      // UUID
-    Payload interface{}   `json:"payload"` // Arbitrary data
-    Events  []QueueEvent  `json:"events"`  // History of queue events
-    Created time.Time     `json:"created"` // For expiration tracking
-}
-```
-
-### Function Documentation
-
-Every exported function must have a godoc comment:
-
-```go
-// Enqueue adds data to the queue
-func (q *Queue) Enqueue(payload interface{}) error {
-    // implementation
-}
+// Enqueue adds data to the queue and tracks memory usage
+func (q *Queue) Enqueue(payload any) error
 ```
 
 ### Error Handling
-
-1. **Custom Error Types**: Define specific error types for different failure modes
-
+Use custom error types for different failures:
 ```go
-// MemoryLimitError represents a memory limit exceeded error
 type MemoryLimitError struct {
     Current int64
     Max     int64
     Needed  int64
 }
 
-func (e *MemoryLimitError) Error() string {
-    return fmt.Sprintf("memory limit exceeded: current=%d, max=%d, needed=%d", 
-        e.Current, e.Max, e.Needed)
-}
-```
+// Always wrap errors with context
+return fmt.Errorf("failed to enqueue: %w", err)
 
-2. **Error Checking**: Always check and propagate errors appropriately
-
-```go
-err := q.Enqueue(payload)
-if err != nil {
-    return fmt.Errorf("failed to enqueue: %w", err)
-}
-```
-
-3. **Type Assertions**: Use type assertion for custom error types
-
-```go
+// Type assert for specific handling
 if memErr, ok := err.(*queue.MemoryLimitError); ok {
-    // Handle memory limit error specifically
+    // Handle memory-specific error
 }
 ```
 
-### Concurrency Patterns
+### Struct Tags
+Always use JSON tags: `json:"field_name"`
 
-1. **Mutex Usage**: Use `sync.RWMutex` for read-heavy operations
+## Concurrency Rules (CRITICAL)
 
+### Mutex Usage
 ```go
-// Read operations
+// Read operations - use RLock
 q.mutex.RLock()
 defer q.mutex.RUnlock()
 
-// Write operations
+// Write operations - use Lock
 q.mutex.Lock()
 defer q.mutex.Unlock()
 ```
 
-2. **Lock Ordering**: Always use consistent lock ordering to prevent deadlocks
-   - Queue lock first, then consumer lock
-   - Never acquire consumer lock while holding queue lock if the consumer might need queue lock
+### Lock Ordering (PREVENT DEADLOCKS)
+1. **ALWAYS** acquire queue lock before consumer lock
+2. **NEVER** hold consumer lock while acquiring queue lock
+3. Use `getPositionUnsafe()` when caller already holds locks
+4. Use **snapshot pattern** to avoid lock ordering violations
 
-3. **WaitGroups**: Use for background goroutines
-
+**Snapshot Pattern** (Recommended for most consumer methods):
 ```go
-queue.wg.Add(1)
-go queue.expirationWorker()
+// ✅ CORRECT: Snapshot consumer state, then acquire queue lock
+c.mutex.Lock()
+chunkElement := c.chunkElement
+indexInChunk := c.indexInChunk
+c.mutex.Unlock()
 
-// In Close()
+// Now safe to acquire queue lock
+c.queue.mutex.RLock()
+// ... use chunkElement and indexInChunk
+c.queue.mutex.RUnlock()
+
+// ❌ WRONG: Consumer lock held while acquiring queue lock
+c.mutex.Lock()
+defer c.mutex.Unlock()
+c.queue.mutex.RLock() // DEADLOCK POSSIBLE!
+```
+
+**Nested Locking** (Only when queue lock acquired first):
+```go
+// ✅ CORRECT: Queue lock first, then consumer lock
+q.mutex.Lock()
+consumer.mutex.Lock()
+// ... do work
+consumer.mutex.Unlock()
+q.mutex.Unlock()
+
+// ❌ WRONG: Consumer lock first creates deadlock risk
+consumer.mutex.Lock()
+q.mutex.Lock() // DEADLOCK POSSIBLE!
+```
+
+**Methods Using Snapshot Pattern**:
+- `Consumer.Read()` - Snapshots position, releases lock before queue access
+- `Consumer.HasMoreData()` - Snapshots position before checking queue
+- `Consumer.GetUnreadCount()` - Snapshots position before counting
+- `Consumer.GetStats()` - Snapshots all fields before queue operations
+
+### Background Workers
+```go
+// Start
+q.wg.Add(1)
+go q.expirationWorker()
+
+// Shutdown (in Close())
 close(q.stopChan)
 q.wg.Wait()
 ```
 
-4. **Channels**: Use buffered channels for notifications to avoid blocking
+### Channels
+Use buffered channels to prevent blocking: `make(chan int, 100)`
 
-```go
-notificationCh: make(chan int, 100), // Buffered channel
-```
+## Memory Management
 
-### Memory Management
-
-1. Track all allocations through `MemoryTracker`
-2. Use `EstimateQueueDataSize()` before adding data
-3. Update memory usage on both addition and removal
-4. Conservative estimation preferred over underestimation
+1. **Pre-validate** before adding: `MemoryTracker.CanAddData()`
+2. **Track additions**: Automatically tracked in `ChunkedList.Enqueue()`
+3. **Track removals**: Update on expiration and cleanup
+4. **Conservative estimates**: Prefer over-estimation to prevent overruns
 
 ```go
 if !q.memoryTracker.CanAddData(data) {
@@ -254,101 +173,118 @@ if !q.memoryTracker.CanAddData(data) {
 }
 ```
 
-### Testing Practices
+## Testing Standards
 
-1. **Test Names**: Use descriptive names starting with `Test`
-
+### Test Structure
 ```go
-func TestEnqueueDequeue(t *testing.T) { ... }
-func TestMultipleConsumers(t *testing.T) { ... }
-func TestConcurrentProducers(t *testing.T) { ... }
-```
-
-2. **Cleanup**: Always defer `Close()` in tests
-
-```go
-q := queue.NewQueue("test-queue")
-defer q.Close()
-```
-
-3. **Error Messages**: Use informative error messages with context
-
-```go
-if data.Payload != testData {
-    t.Errorf("Expected payload '%v', got '%v'", testData, data.Payload)
+func TestFeatureName(t *testing.T) {
+    q := queue.NewQueue("test-queue")
+    defer q.Close()  // ALWAYS cleanup
+    
+    // Test logic with descriptive errors
+    if got != want {
+        t.Errorf("Expected %v, got %v", want, got)
+    }
 }
 ```
 
-4. **Concurrent Tests**: Use `sync.WaitGroup` and proper synchronization
-
+### Concurrent Tests
 ```go
 var wg sync.WaitGroup
-wg.Add(numProducers)
-// ... spawn goroutines
+wg.Add(numGoroutines)
+for i := 0; i < numGoroutines; i++ {
+    go func(id int) {
+        defer wg.Done()
+        // Test logic
+    }(i)
+}
 wg.Wait()
 ```
 
-## Architecture Patterns
+### Race Detection
+**ALWAYS** run tests with `-race` flag before committing changes involving:
+- Lock modifications
+- Shared state access
+- Consumer position updates
+- Expiration logic
 
-### Component Interaction
+## Architecture Essentials
 
+### Component Hierarchy
 ```
-Queue (thread-safe coordinator)
-├── ChunkedList (storage)
-│   ├── container/list (doubly-linked list)
-│   └── ChunkNode arrays (1000 items each)
-├── ConsumerManager (consumer tracking)
-│   └── Consumer instances (independent positions)
-└── MemoryTracker (memory accounting)
+Queue (RWMutex-protected coordinator)
+├── ChunkedList (container/list with 1000-item chunks)
+├── ConsumerManager (tracks all consumers)  
+│   └── Consumer (independent position, own mutex)
+└── MemoryTracker (1MB limit enforcement)
 ```
 
-### Key Design Principles
+### Design Principles
+1. **Immutability**: QueueData never modified after creation
+2. **Independence**: Each consumer reads all data at own pace
+3. **Lock Granularity**: Separate mutexes for queue and consumers
+4. **Snapshot Pattern**: Read state without holding locks to avoid deadlocks
+5. **Background Expiration**: 30-second intervals, 10-minute default TTL
+6. **Pre-validation**: Check limits before allocating
+7. **TOCTOU Prevention**: Hold locks during critical read operations
 
-1. **Immutability**: QueueData created once, events appended
-2. **Independence**: Each consumer tracks its own position
-3. **Lock Granularity**: Separate locks for queue and consumers
-4. **Expiration**: Background worker with consumer notifications
-5. **Memory Safety**: Pre-validation before allocation
+### Key Constants
+```go
+DefaultTTL = 10 * time.Minute          // Item expiration
+ExpirationCheckInterval = 30 * time.Second
+MaxQueueMemory = 1024 * 1024           // 1MB limit
+ChunkSize = 1000                        // Items per chunk
+```
 
-## Common Development Tasks
+## Common Tasks
 
-### Adding a New Queue Method
-
-1. Add method to `Queue` type in `queue/queue.go`
-2. Use appropriate locking (RLock for reads, Lock for writes)
+### Adding Queue Method
+1. Add to `queue/queue.go`
+2. Use `RLock` for reads, `Lock` for writes
 3. Add godoc comment
-4. Update tests in `tests/queue_test.go`
+4. Write test in `tests/queue_test.go`
+5. Run `go test ./tests -v -race`
 
-### Adding Consumer Functionality
-
-1. Add method to `Consumer` type in `queue/consumer.go`
-2. Lock consumer state appropriately
-3. Consider interaction with queue state
+### Adding Consumer Method  
+1. Add to `queue/consumer.go`
+2. Lock consumer state with `c.mutex`
+3. Consider queue interaction (may need `q.mutex.RLock()`)
 4. Test with multiple concurrent consumers
+5. Verify no deadlocks with `-race`
 
-### Modifying Memory Tracking
+### Modifying Memory Logic
+1. Update `queue/memory.go`
+2. Ensure additions AND removals tracked
+3. Test limit enforcement
+4. Validate with large payloads (>100KB)
 
-1. Update estimation logic in `queue/memory.go`
-2. Ensure both addition and removal update tracking
-3. Test memory limit enforcement
-4. Validate with large payloads
+## Common Pitfalls
 
-## Performance Considerations
+❌ **DON'T**: Acquire consumer lock then queue lock (deadlock)  
+✅ **DO**: Use snapshot pattern or acquire queue lock first
 
-- **Chunk Size**: 1000 items per chunk balances memory and traversal
-- **Lock Contention**: RWMutex favors read-heavy workloads
-- **Memory Estimation**: Reflection-based, not real allocation size
-- **Expiration**: Background checks every 30 seconds
-- **Channel Buffering**: Notification channels buffered to prevent blocking
+❌ **DON'T**: Hold consumer lock while acquiring queue lock  
+✅ **DO**: Release consumer lock before acquiring queue lock
 
-## Module Information
+❌ **DON'T**: Release queue lock before reading chunk data  
+✅ **DO**: Keep queue lock held during `chunk.Get()` to prevent TOCTOU issues
 
-- **Module**: `mpmc-queue`
-- **Go Version**: 1.25.1
-- **Dependencies**: `github.com/google/uuid v1.6.0`
+❌ **DON'T**: Modify QueueData after creation  
+✅ **DO**: Create immutable QueueData with NewQueueData()
 
-## Additional Resources
+❌ **DON'T**: Forget to defer Close() in tests  
+✅ **DO**: Always `defer q.Close()` immediately after creation
 
-- See `README.md` for API documentation and usage examples
-- See `PROJECT_PLAN.md` for architecture details and implementation phases
-- Check `examples/` directory for complete working code samples
+❌ **DON'T**: Skip race detection on concurrent code  
+✅ **DO**: Run `go test ./tests -v -race` on ALL changes
+
+❌ **DON'T**: Use unprotected shared variables in tests  
+✅ **DO**: Use `atomic.AddInt64()` and `atomic.LoadInt64()` for shared counters
+
+## Resources
+
+- `README.md` - API docs and usage examples
+- `ARCHITECTURE.md` - Detailed design and component interaction
+- `PROJECT_PLAN.md` - Implementation phases and decisions
+- `RACE_CONDITION_FIX_STRATEGY.md` - Concurrency solutions
+- `examples/` - Working code samples

@@ -337,6 +337,30 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 - Prevents data loss when items expire from middle of consumer's position
 - Consumers maintain correct position after chunk compaction
 
+### ✅ Fix Deadlock in Lock Hierarchy (commit: e0ed843)
+- Fixed deadlock between expiration worker and consumers
+- Added getPositionUnsafe() for internal use
+- calculateExpiredCountsPerConsumer() now locks consumer briefly without nesting
+- Refactored Consumer.Read() to use fine-grained locking
+- Fixed TestHighThroughputStress busy-wait loop
+
+### ✅ Fix Lock Ordering Violations (Latest)
+- Fixed HasMoreData() lock ordering violation using snapshot pattern
+- Fixed GetUnreadCount() lock ordering violation
+- Fixed GetStats() lock ordering violation
+- All consumer methods now follow queue→consumer lock hierarchy
+- Prevents deadlocks in all consumer operations
+
+### ✅ Fix TOCTOU Issue in Consumer.Read() (Latest)
+- Queue lock now held during chunk.Get() to prevent race with expiration
+- Prevents reading stale data when expiration modifies chunks
+- Ensures data consistency during concurrent operations
+
+### ✅ Fix Test Race Conditions (Latest)
+- TestHighThroughputStress now uses atomic.AddInt64/LoadInt64 for shared counters
+- Added sync/atomic import to benchmark_test.go
+- All tests pass with -race flag
+
 ### ✅ Use Modern Go Idioms (commit: 512208d)
 - Replaced all `interface{}` with `any` throughout codebase
 - Updated 6 files across queue package, tests, and examples
@@ -374,8 +398,8 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 
 ## Bug Fix Summary
 
-**Total Bugs Fixed**: 10 critical bugs
-- 5 race conditions (SIGSEGV crashes, data corruption)
+**Total Bugs Fixed**: 13 critical bugs
+- 8 race conditions (SIGSEGV crashes, data corruption, lock ordering, TOCTOU, test races)
 - 3 expiration bugs (memory leak, API violation, position corruption)
 - 2 memory tracking bugs
 
@@ -383,6 +407,12 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 - All tests pass with -race flag
 - Stress tested with 20 producers + 20 consumers
 - Zero data corruption detected
-- Production-ready as of commit 2c85032
+- Zero deadlocks detected
+- Production-ready with comprehensive concurrency fixes
 
-Last Updated: 2025-12-25
+**Latest Fixes (2025-12-26)**:
+- Lock ordering violations in HasMoreData(), GetUnreadCount(), GetStats()
+- TOCTOU issue in Consumer.Read() chunk access
+- Test race condition in TestHighThroughputStress
+
+Last Updated: 2025-12-26
