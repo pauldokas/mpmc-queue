@@ -71,9 +71,9 @@ func (c *Consumer) SetPosition(element *list.Element, index int) {
 	c.indexInChunk = index
 }
 
-// Read reads the next available data item for this consumer
+// TryRead attempts to read the next available data item for this consumer without blocking
 // Returns nil if no data is available
-func (c *Consumer) Read() *QueueData {
+func (c *Consumer) TryRead() *QueueData {
 	// Initialize position if this is the first read
 	c.mutex.Lock()
 	needsInit := c.chunkElement == nil
@@ -165,8 +165,30 @@ func (c *Consumer) Read() *QueueData {
 	}
 }
 
-// ReadBatch reads multiple items up to the specified limit
-func (c *Consumer) ReadBatch(limit int) []*QueueData {
+// Read reads the next available data item for this consumer, blocking if no data is available
+// Blocks until data becomes available or the queue is closed
+func (c *Consumer) Read() *QueueData {
+	for {
+		data := c.TryRead()
+		if data != nil {
+			return data
+		}
+
+		// No data available, wait for notification
+		select {
+		case <-c.queue.enqueueNotify:
+			// New data might be available, retry
+			continue
+		case <-c.queue.stopChan:
+			// Queue is closing, return nil
+			return nil
+		}
+	}
+}
+
+// TryReadBatch attempts to read multiple items up to the specified limit without blocking
+// Returns immediately with whatever items are available (may be less than limit)
+func (c *Consumer) TryReadBatch(limit int) []*QueueData {
 	if limit <= 0 {
 		return nil
 	}
@@ -174,9 +196,37 @@ func (c *Consumer) ReadBatch(limit int) []*QueueData {
 	batch := make([]*QueueData, 0, limit)
 
 	for len(batch) < limit {
-		data := c.Read()
+		data := c.TryRead()
 		if data == nil {
 			break // No more data available
+		}
+		batch = append(batch, data)
+	}
+
+	return batch
+}
+
+// ReadBatch reads multiple items up to the specified limit, blocking until at least one item is available
+// Returns a batch of items (may be less than limit if queue has fewer items)
+func (c *Consumer) ReadBatch(limit int) []*QueueData {
+	if limit <= 0 {
+		return nil
+	}
+
+	batch := make([]*QueueData, 0, limit)
+
+	// Block until at least one item is available
+	firstItem := c.Read()
+	if firstItem == nil {
+		return batch // Queue closed
+	}
+	batch = append(batch, firstItem)
+
+	// Try to read more items without blocking
+	for len(batch) < limit {
+		data := c.TryRead()
+		if data == nil {
+			break // No more data immediately available
 		}
 		batch = append(batch, data)
 	}

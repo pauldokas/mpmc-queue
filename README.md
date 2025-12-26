@@ -59,22 +59,40 @@ import (
 )
 
 func main() {
-    // Create a new queue
+    // Create a new queue with default 10-minute TTL
     q := queue.NewQueue("my-queue")
     defer q.Close()
     
-    // Enqueue data
+    // Enqueue data (blocks if queue is full)
     err := q.Enqueue("Hello World")
     if err != nil {
         panic(err)
     }
     
-    // Create consumer and read data
+    // Create consumer and read data (blocks if no data available)
     consumer := q.AddConsumer()
     data := consumer.Read()
     if data != nil {
-        fmt.Printf("Received: %s\\n", data.Payload)
+        fmt.Printf("Received: %s\n", data.Payload)
     }
+}
+```
+
+## Non-Blocking Operations
+
+For non-blocking operations, use the `Try*` methods:
+
+```go
+// Non-blocking enqueue - returns error immediately if queue is full
+err := q.TryEnqueue("data")
+if err != nil {
+    // Handle full queue
+}
+
+// Non-blocking read - returns nil immediately if no data available
+data := consumer.TryRead()
+if data == nil {
+    // No data available
 }
 ```
 
@@ -113,13 +131,19 @@ data2 := consumer2.Read() // Also gets "Message 1"
 ### Batch Operations
 
 ```go
-// Batch enqueue
-items := []interface{}{"item1", "item2", "item3"}
+// Batch enqueue (blocking - waits until all items can be added)
+items := []any{"item1", "item2", "item3"}
 err := q.EnqueueBatch(items)
 
-// Batch read
+// Non-blocking batch enqueue
+err := q.TryEnqueueBatch(items)
+
+// Batch read (blocking - waits for at least 1 item, returns up to 10)
 consumer := q.AddConsumer()
-batch := consumer.ReadBatch(10) // Read up to 10 items
+batch := consumer.ReadBatch(10)
+
+// Non-blocking batch read
+batch := consumer.TryReadBatch(10) // Returns immediately with available items
 ```
 
 ### Expiration Notifications
@@ -167,9 +191,13 @@ for _, cs := range consumerStats {
 - `NewQueue(name string) *Queue` - Create queue with default TTL
 - `NewQueueWithTTL(name, ttl) *Queue` - Create queue with custom TTL
 
-#### Data Operations
-- `Enqueue(payload any) error` - Add single item
-- `EnqueueBatch(payloads []any) error` - Add multiple items atomically
+#### Data Operations (Blocking)
+- `Enqueue(payload any) error` - Add single item (blocks if queue full)
+- `EnqueueBatch(payloads []any) error` - Add multiple items atomically (blocks if queue full)
+
+#### Data Operations (Non-Blocking)
+- `TryEnqueue(payload any) error` - Add single item (returns error immediately if full)
+- `TryEnqueueBatch(payloads []any) error` - Add multiple items (returns error immediately if full)
 
 #### Consumer Management
 - `AddConsumer() *Consumer` - Create new consumer
@@ -194,9 +222,13 @@ for _, cs := range consumerStats {
 
 ### Consumer Methods
 
-#### Reading
-- `Read() *QueueData` - Read next item
-- `ReadBatch(limit int) []*QueueData` - Read multiple items
+#### Reading (Blocking)
+- `Read() *QueueData` - Read next item (blocks if no data available)
+- `ReadBatch(limit int) []*QueueData` - Read multiple items (blocks until at least 1 available)
+
+#### Reading (Non-Blocking)
+- `TryRead() *QueueData` - Read next item (returns nil immediately if no data)
+- `TryReadBatch(limit int) []*QueueData` - Read multiple items (returns immediately with available items)
 - `HasMoreData() bool` - Check if more data available
 
 #### Information
@@ -257,10 +289,11 @@ type ConsumerStats struct {
 - **Scalability**: Efficient with many producers/consumers
 
 ### Time Complexity
-- **Enqueue**: O(1) amortized
-- **Read**: O(1) per item
+- **Enqueue/TryEnqueue**: O(1) amortized
+- **Read/TryRead**: O(1) per item
 - **Expiration**: O(k) where k is expired items
 - **Memory Check**: O(1)
+- **Blocking Operations**: Waits on channel notifications (efficient)
 
 ## Testing
 
@@ -282,6 +315,9 @@ go test ./tests -race -run "TestConcurrent|TestMultiple" -v
 ```bash
 # Basic functionality
 go test ./tests -run "TestEnqueue|TestMultiple" -v
+
+# Blocking behavior tests
+go test ./tests -run "TestBlocking|TestTry" -v
 
 # Expiration tests
 go test ./tests -run "TestExpiration" -v
@@ -345,21 +381,27 @@ if qErr, ok := err.(*queue.QueueError); ok {
 - Use batch operations for multiple items
 - Handle memory limit errors gracefully
 - Consider payload size impact on memory usage
+- Use `TryEnqueue` when timeouts or non-blocking behavior is needed
+- Use blocking `Enqueue` when waiting for space is acceptable
 
 ### Consumer Guidelines
 - Process expiration notifications appropriately
 - Use batch reads for high-throughput scenarios
 - Monitor consumer lag via statistics
+- Use `TryRead` in tests to avoid blocking
+- Use blocking `Read` in production when waiting for data is acceptable
 
 ### Memory Management
 - Monitor memory usage percentage
 - Consider TTL settings based on data lifecycle
 - Test with realistic payload sizes
+- Configure TTL at queue creation based on your use case
 
 ### Concurrency
 - Each consumer processes independently
 - New consumers read from the beginning
 - Producers are load-balanced automatically
+- Blocking operations use efficient channel notifications
 
 ## Implementation Details
 
@@ -391,6 +433,7 @@ if qErr, ok := err.(*queue.QueueError); ok {
 - No persistence across restarts
 - Dequeue history grows unbounded per consumer
 - QueueData is immutable (cannot be modified after enqueue)
+- Blocking operations wait indefinitely (use Try* methods for timeouts)
 
 See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for solutions and workarounds.
 

@@ -57,15 +57,16 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 - **Files**: `queue/queue.go`, `queue/consumer.go`
 
 ### Add Test Coverage Reporting
-- **Status**: ⚠️ Not Started
+- **Status**: ✅ Completed
 - **Task**: Set up coverage reporting and tracking
+- **Completed**: Added coverage commands to AGENTS.md
 - **Commands**:
   ```bash
-  go test ./... -coverprofile=coverage.out
+  go test ./tests -coverprofile=coverage.out
   go tool cover -html=coverage.out -o coverage.html
   go tool cover -func=coverage.out | grep total
   ```
-- **Update**: Add coverage commands to `AGENTS.md`
+- **Files**: `AGENTS.md`
 
 ### Add Missing Test Cases
 - **Status**: ⚠️ Not Started
@@ -415,4 +416,16 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 - TOCTOU issue in Consumer.Read() chunk access
 - Test race condition in TestHighThroughputStress
 
-Last Updated: 2025-12-26
+**Latest Enhancements (2025-12-27)**:
+- ✅ Added blocking/non-blocking operation support
+- ✅ Configurable TTL at queue creation
+- ✅ Blocking Enqueue/Read operations (default)
+- ✅ Non-blocking TryEnqueue/TryRead operations
+- ✅ Blocking/non-blocking batch operations
+- ✅ Channel-based notification system for blocking operations
+- ✅ Comprehensive blocking behavior tests (tests/blocking_test.go)
+- ✅ Updated all documentation (README, API docs, USAGE_GUIDE, ARCHITECTURE, AGENTS)
+- ✅ All tests pass with -race flag
+- ✅ TestHighThroughputStress now passes
+
+Last Updated: 2025-12-27

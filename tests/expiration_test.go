@@ -14,7 +14,7 @@ func TestExpiration(t *testing.T) {
 
 	// Enqueue some data
 	for i := 0; i < 5; i++ {
-		err := q.Enqueue(i)
+		err := q.TryEnqueue(i)
 		if err != nil {
 			t.Fatalf("Failed to enqueue item %d: %v", i, err)
 		}
@@ -50,7 +50,7 @@ func TestConsumerNotificationOnExpiration(t *testing.T) {
 	// Enqueue some data
 	numItems := 10
 	for i := 0; i < numItems; i++ {
-		q.Enqueue(i)
+		q.TryEnqueue(i)
 	}
 
 	// Create consumer but don't read anything
@@ -80,7 +80,7 @@ func TestPartialExpiration(t *testing.T) {
 
 	// Enqueue first batch
 	for i := 0; i < 3; i++ {
-		q.Enqueue(i)
+		q.TryEnqueue(i)
 	}
 
 	// Wait a bit
@@ -88,7 +88,7 @@ func TestPartialExpiration(t *testing.T) {
 
 	// Enqueue second batch (these shouldn't expire yet)
 	for i := 3; i < 6; i++ {
-		q.Enqueue(i)
+		q.TryEnqueue(i)
 	}
 
 	// Wait for first batch to expire
@@ -109,7 +109,7 @@ func TestPartialExpiration(t *testing.T) {
 	// Consumer should be able to read remaining items
 	consumer := q.AddConsumer()
 	for i := 3; i < 6; i++ {
-		data := consumer.Read()
+		data := consumer.TryRead()
 		if data == nil {
 			t.Fatalf("Expected to read item %d, got nil", i)
 		}
@@ -127,14 +127,14 @@ func TestConsumerPartialRead(t *testing.T) {
 	// Enqueue items
 	numItems := 10
 	for i := 0; i < numItems; i++ {
-		q.Enqueue(i)
+		q.TryEnqueue(i)
 	}
 
 	// Create consumer and read some items
 	consumer := q.AddConsumer()
 	itemsRead := 4
 	for i := 0; i < itemsRead; i++ {
-		data := consumer.Read()
+		data := consumer.TryRead()
 		if data == nil {
 			t.Fatalf("Failed to read item %d", i)
 		}
@@ -167,7 +167,7 @@ func TestMultipleConsumersExpiration(t *testing.T) {
 	// Enqueue items
 	numItems := 10
 	for i := 0; i < numItems; i++ {
-		q.Enqueue(i)
+		q.TryEnqueue(i)
 	}
 
 	// Create multiple consumers at different read positions
@@ -226,7 +226,7 @@ func TestExpirationDisabled(t *testing.T) {
 
 	// Enqueue data
 	for i := 0; i < 5; i++ {
-		q.Enqueue(i)
+		q.TryEnqueue(i)
 	}
 
 	// Wait past expiration time
@@ -272,12 +272,12 @@ func TestLongRunningExpiration(t *testing.T) {
 	start := time.Now()
 	for time.Since(start) < 3*time.Second {
 		// Add an item
-		q.Enqueue(addedCount)
+		q.TryEnqueue(addedCount)
 		addedCount++
 
 		// Occasionally read items (slower than we add them)
 		if addedCount%3 == 0 {
-			data := consumer.Read()
+			data := consumer.TryRead()
 			if data != nil {
 				readCount++
 			}
@@ -336,7 +336,7 @@ func TestCustomTTL(t *testing.T) {
 			defer q.Close()
 
 			// Add item
-			q.Enqueue("test")
+			q.TryEnqueue("test")
 
 			// Wait for expiration
 			time.Sleep(tc.ttl + 50*time.Millisecond)
@@ -357,7 +357,7 @@ func TestRuntimeTTLChange(t *testing.T) {
 
 	// Add items
 	for i := 0; i < 5; i++ {
-		q.Enqueue(i)
+		q.TryEnqueue(i)
 	}
 
 	// Change TTL to very short

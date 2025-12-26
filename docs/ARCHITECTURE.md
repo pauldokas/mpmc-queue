@@ -31,6 +31,8 @@ mpmc-queue is a multi-producer, multi-consumer (MPMC) queue implementation optim
 - **Chunked Storage**: Items stored in 1000-item chunks
 - **Immutable Data**: QueueData cannot be modified after creation
 - **Atomic Operations**: Size tracking uses atomic int32
+- **Blocking/Non-Blocking**: Supports both blocking and non-blocking operations
+- **Configurable TTL**: Time-to-live set at queue creation (default 10 minutes)
 
 ---
 
@@ -41,20 +43,21 @@ mpmc-queue is a multi-producer, multi-consumer (MPMC) queue implementation optim
 The central coordinator that manages data, consumers, and expiration.
 
 ```
-┌─────────────────────────────────────────┐
-│              Queue                      │
-│  ┌─────────────────────────────────┐   │
-│  │  name, ttl, mutex, stopChan     │   │
-│  └─────────────────────────────────┘   │
-│                                         │
-│  ┌─────────────┐  ┌──────────────────┐│
-│  │ ChunkedList │  │ ConsumerManager  ││
-│  └─────────────┘  └──────────────────┘│
-│                                         │
-│  ┌─────────────┐  ┌──────────────────┐│
-│  │MemoryTracker│  │ExpirationWorker  ││
-│  └─────────────┘  └──────────────────┘│
-└─────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│              Queue                           │
+│  ┌────────────────────────────────────────┐ │
+│  │  name, ttl, mutex, stopChan            │ │
+│  │  enqueueNotify, dequeueNotify channels │ │
+│  └────────────────────────────────────────┘ │
+│                                              │
+│  ┌─────────────┐  ┌──────────────────┐     │
+│  │ ChunkedList │  │ ConsumerManager  │     │
+│  └─────────────┘  └──────────────────┘     │
+│                                              │
+│  ┌─────────────┐  ┌──────────────────┐     │
+│  │MemoryTracker│  │ExpirationWorker  │     │
+│  └─────────────┘  └──────────────────┘     │
+└──────────────────────────────────────────────┘
 ```
 
 **Responsibilities:**
@@ -62,6 +65,8 @@ The central coordinator that manages data, consumers, and expiration.
 - Manage concurrent access with RWMutex
 - Track memory usage
 - Run expiration background worker
+- Notify consumers when data is enqueued (enqueueNotify channel)
+- Notify producers when space is freed (dequeueNotify channel)
 
 ---
 
@@ -307,6 +312,78 @@ Producer: Queue.mutex.Lock()  ──→ Enqueue ──→ Unlock
                       │
                       └─→ Read chunk data (lock-free via atomics)
 ```
+
+---
+
+## Blocking Operations
+
+### Design Overview
+
+The queue supports both blocking and non-blocking operations using efficient channel-based notifications.
+
+### Notification Channels
+
+**enqueueNotify** (buffered, capacity 1):
+- Signals consumers when new data is enqueued
+- Buffered to avoid blocking producers
+- Non-blocking send (select with default)
+
+**dequeueNotify** (buffered, capacity 1):
+- Signals producers when space becomes available
+- Triggered by expiration worker
+- Buffered to avoid blocking cleanup
+
+### Blocking Enqueue Flow
+
+```
+Producer calls Enqueue(data)
+    │
+    ├─→ Lock queue
+    ├─→ Try to add data
+    │   ├─ Success? ──→ Notify consumers ──→ Return
+    │   └─ Memory full?
+    │       │
+    │       ├─→ Unlock queue
+    │       ├─→ Wait on dequeueNotify channel
+    │       │   ├─ Data expired? ──→ Retry from top
+    │       │   └─ Queue closed? ──→ Return error
+    │       └─→ Loop
+```
+
+### Blocking Read Flow
+
+```
+Consumer calls Read()
+    │
+    ├─→ Try TryRead()
+    │   ├─ Got data? ──→ Return data
+    │   └─ No data?
+    │       │
+    │       ├─→ Wait on enqueueNotify channel
+    │       │   ├─ Data enqueued? ──→ Retry from top
+    │       │   └─ Queue closed? ──→ Return nil
+    │       └─→ Loop
+```
+
+### Non-Blocking Operations
+
+**TryEnqueue() / TryRead():**
+- Attempt operation once
+- Return immediately with error/nil if can't proceed
+- No waiting on channels
+- Used in tests to avoid blocking
+
+### Efficiency Considerations
+
+**Channel Notifications:**
+- Buffered channels prevent blocking on send
+- Multiple waiting goroutines woken efficiently
+- Non-blocking send pattern (select with default)
+
+**Spurious Wakeups:**
+- Multiple consumers may wake on single notification
+- Each retries TryRead() - no data race
+- False wakeups are cheap (just retry)
 
 ---
 

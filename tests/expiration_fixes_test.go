@@ -18,7 +18,7 @@ func TestMemoryLeakOnExpiration(t *testing.T) {
 	// Enqueue items that will use significant memory
 	largePayload := make([]byte, 10000) // 10KB each
 	for i := 0; i < 10; i++ {
-		err := q.Enqueue(largePayload)
+		err := q.TryEnqueue(largePayload)
 		if err != nil {
 			t.Fatalf("Failed to enqueue item %d: %v", i, err)
 		}
@@ -55,7 +55,7 @@ func TestMemoryLeakOnExpiration(t *testing.T) {
 
 	// Verify we can enqueue more items (no false memory limit)
 	for i := 0; i < 10; i++ {
-		err := q.Enqueue(largePayload)
+		err := q.TryEnqueue(largePayload)
 		if err != nil {
 			t.Fatalf("Failed to enqueue after expiration (memory leak?): %v", err)
 		}
@@ -69,7 +69,7 @@ func TestConsumerPositionAfterPartialExpiration(t *testing.T) {
 
 	// Enqueue first 5 items
 	for i := 0; i < 5; i++ {
-		q.Enqueue(i)
+		q.TryEnqueue(i)
 	}
 
 	// Wait a bit to ensure these items have different creation times
@@ -77,13 +77,13 @@ func TestConsumerPositionAfterPartialExpiration(t *testing.T) {
 
 	// Enqueue remaining 15 items (these will be newer)
 	for i := 5; i < 20; i++ {
-		q.Enqueue(i)
+		q.TryEnqueue(i)
 	}
 
 	// Create consumer and read first 5 items
 	consumer := q.AddConsumer()
 	for i := 0; i < 5; i++ {
-		data := consumer.Read()
+		data := consumer.TryRead()
 		if data == nil {
 			t.Fatalf("Failed to read item %d", i)
 		}
@@ -103,7 +103,7 @@ func TestConsumerPositionAfterPartialExpiration(t *testing.T) {
 
 	// Consumer should now be at the beginning of the adjusted chunk
 	// Next item should be 5 (since 0-4 expired and consumer already read them)
-	data := consumer.Read()
+	data := consumer.TryRead()
 	if data == nil {
 		t.Fatal("Expected to read item 5 after expiration")
 	}
@@ -113,7 +113,7 @@ func TestConsumerPositionAfterPartialExpiration(t *testing.T) {
 
 	// Continue reading to verify no items are skipped
 	for i := 6; i < 20; i++ {
-		data := consumer.Read()
+		data := consumer.TryRead()
 		if data == nil {
 			t.Fatalf("Failed to read item %d", i)
 		}
@@ -130,7 +130,7 @@ func TestConsumerReadingDuringExpiration(t *testing.T) {
 
 	// Enqueue first 5 items
 	for i := 0; i < 5; i++ {
-		q.Enqueue(i)
+		q.TryEnqueue(i)
 	}
 
 	// Create a time gap - first 5 items will expire before the rest
@@ -138,14 +138,14 @@ func TestConsumerReadingDuringExpiration(t *testing.T) {
 
 	// Enqueue remaining 5 items (these are fresh)
 	for i := 5; i < 10; i++ {
-		q.Enqueue(i)
+		q.TryEnqueue(i)
 	}
 
 	consumer := q.AddConsumer()
 
 	// Read first 3 items
 	for i := 0; i < 3; i++ {
-		data := consumer.Read()
+		data := consumer.TryRead()
 		if data == nil || data.Payload != i {
 			t.Errorf("Failed to read item %d correctly", i)
 		}
@@ -161,7 +161,7 @@ func TestConsumerReadingDuringExpiration(t *testing.T) {
 	// So the consumer should now continue from item 5 (the first non-expired item)
 	// But the consumer already read 0, 1, 2, so it should be positioned to read what comes after its last read
 	// Since items 3 and 4 were removed, the next available item is 5
-	data := consumer.Read()
+	data := consumer.TryRead()
 	if data == nil {
 		t.Fatal("Expected to read item 5 (first non-expired)")
 	}
@@ -171,7 +171,7 @@ func TestConsumerReadingDuringExpiration(t *testing.T) {
 
 	// Continue with remaining items
 	for i := 6; i < 10; i++ {
-		data := consumer.Read()
+		data := consumer.TryRead()
 		if data == nil {
 			t.Fatalf("Failed to read item %d", i)
 		}
@@ -188,7 +188,7 @@ func TestMultipleConsumersAfterExpiration(t *testing.T) {
 
 	// Enqueue first 5 items that will be old
 	for i := 0; i < 5; i++ {
-		q.Enqueue(i)
+		q.TryEnqueue(i)
 	}
 
 	// Wait to create age difference
@@ -196,7 +196,7 @@ func TestMultipleConsumersAfterExpiration(t *testing.T) {
 
 	// Enqueue remaining 10 items (newer)
 	for i := 5; i < 15; i++ {
-		q.Enqueue(i)
+		q.TryEnqueue(i)
 	}
 
 	// Create 3 consumers at different positions

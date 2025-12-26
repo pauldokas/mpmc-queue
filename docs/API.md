@@ -59,50 +59,121 @@ defer q.Close()
 
 ---
 
-### Enqueue Operations
+### Enqueue Operations (Blocking)
 
 #### `Enqueue(payload any) error`
 
-Adds a single item to the queue.
+Adds a single item to the queue, **blocking** if the queue is full until space becomes available.
 
 **Parameters:**
 - `payload` (any): Data to enqueue (any type)
 
 **Returns:**
-- `error`: nil on success, MemoryLimitError if queue is full
+- `error`: nil on success, error if queue is closed
+
+**Behavior:**
+- **Blocks** when queue is full (memory limit reached)
+- Waits for space to become available via expiration
+- Wakes up when items are expired and removed
+- Returns error if queue is closed while waiting
 
 **Thread-Safety:** Safe for concurrent use by multiple producers
 
 **Example:**
 ```go
+// Will wait until space is available
 err := q.Enqueue("hello world")
 if err != nil {
-    if _, ok := err.(*queue.MemoryLimitError); ok {
-        // Handle memory limit exceeded
-    }
+    // Queue was closed while waiting
+    log.Printf("Enqueue failed: %v", err)
 }
 ```
 
-**Time Complexity:** O(1) amortized
+**Time Complexity:** O(1) amortized (excluding wait time)
 
 ---
 
 #### `EnqueueBatch(payloads []any) error`
 
-Adds multiple items atomically.
+Adds multiple items atomically, **blocking** if the queue is full.
 
 **Parameters:**
 - `payloads` ([]any): Slice of items to enqueue
 
 **Returns:**
-- `error`: nil on success, MemoryLimitError if batch exceeds limit
+- `error`: nil on success, error if queue is closed
 
-**Atomicity:** All items are validated before any are added. Either all succeed or none are added.
+**Atomicity:** All items are validated before any are added. Either all succeed or waits until all can be added.
+
+**Behavior:**
+- **Blocks** when queue cannot fit all items
+- Waits for sufficient space via expiration
+- All-or-nothing operation
 
 **Example:**
 ```go
 items := []any{"item1", "item2", "item3"}
 err := q.EnqueueBatch(items)
+if err != nil {
+    log.Printf("Batch enqueue failed: %v", err)
+}
+```
+
+---
+
+### Enqueue Operations (Non-Blocking)
+
+#### `TryEnqueue(payload any) error`
+
+Attempts to add a single item without blocking.
+
+**Parameters:**
+- `payload` (any): Data to enqueue
+
+**Returns:**
+- `error`: nil on success, MemoryLimitError if queue is full
+
+**Behavior:**
+- Returns **immediately** if queue is full
+- Does not wait for space to become available
+
+**Example:**
+```go
+err := q.TryEnqueue("hello world")
+if err != nil {
+    if _, ok := err.(*queue.MemoryLimitError); ok {
+        // Queue is full, handle accordingly
+        log.Printf("Queue full, dropping item")
+    }
+}
+```
+
+**Use Cases:**
+- Tests (to avoid blocking)
+- Non-critical data
+- When implementing custom timeout logic
+
+---
+
+#### `TryEnqueueBatch(payloads []any) error`
+
+Attempts to add multiple items without blocking.
+
+**Parameters:**
+- `payloads` ([]any): Slice of items to enqueue
+
+**Returns:**
+- `error`: nil on success, MemoryLimitError if batch won't fit
+
+**Atomicity:** Either all items are added or none are added.
+
+**Example:**
+```go
+items := []any{"item1", "item2", "item3"}
+err := q.TryEnqueueBatch(items)
+if err != nil {
+    // Batch couldn't fit, try smaller batch or retry later
+}
 ```
 
 **Time Complexity:** O(n) where n is batch size
@@ -350,50 +421,127 @@ if err := q.CloseWithContext(ctx); err != nil {
 
 ## Consumer API
 
-### Reading Data
+### Reading Data (Blocking)
 
 #### `Read() *QueueData`
 
-Reads the next item for this consumer.
+Reads the next item for this consumer, **blocking** if no data is available.
 
 **Returns:**
-- `*QueueData`: Next data item or nil if no data available
+- `*QueueData`: Next data item or nil if queue is closed
+
+**Behavior:**
+- **Blocks** when no data is available
+- Waits for new data to be enqueued
+- Returns nil if queue is closed while waiting
+- Advances consumer's position
+- Skips expired items automatically
 
 **Thread-Safety:** Each consumer is independent and thread-safe
 
 **Example:**
 ```go
-for {
-    data := consumer.Read()
-    if data == nil {
-        break // No more data
-    }
-    
-    // Process data
-    fmt.Printf("ID: %s, Payload: %v\n", data.ID, data.Payload)
+// Will wait for data if queue is empty
+data := consumer.Read()
+if data == nil {
+    // Queue was closed
+    return
 }
+
+// Process data
+fmt.Printf("ID: %s, Payload: %v\n", data.ID, data.Payload)
 ```
 
-**Behavior:**
-- Non-blocking (returns nil immediately if no data)
-- Advances consumer's position
-- Skips expired items automatically
+**Use Cases:**
+- Worker threads that process data continuously
+- Event-driven processing
+- Stream processing
 
 ---
 
 #### `ReadBatch(limit int) []*QueueData`
 
-Reads multiple items up to the specified limit.
+Reads multiple items, **blocking** until at least one item is available.
 
 **Parameters:**
 - `limit` (int): Maximum items to read
 
 **Returns:**
-- `[]*QueueData`: Slice of data items (may be less than limit)
+- `[]*QueueData`: Slice of items (length between 1 and limit)
+
+**Behavior:**
+- **Blocks** until at least 1 item is available
+- Returns immediately once data is available
+- May return fewer items than limit if queue has fewer items
 
 **Example:**
 ```go
-items := consumer.ReadBatch(10)
+// Waits for at least 1 item, then returns up to 10
+batch := consumer.ReadBatch(10)
+for _, data := range batch {
+    fmt.Printf("Processing: %v\n", data.Payload)
+}
+```
+
+---
+
+### Reading Data (Non-Blocking)
+
+#### `TryRead() *QueueData`
+
+Attempts to read the next item without blocking.
+
+**Returns:**
+- `*QueueData`: Next data item or nil if no data available
+
+**Behavior:**
+- Returns **immediately** if no data is available
+- Does not wait for new data
+- Advances consumer's position
+- Skips expired items automatically
+
+**Example:**
+```go
+data := consumer.TryRead()
+if data == nil {
+    // No data available right now
+    return
+}
+
+// Process data
+fmt.Printf("ID: %s, Payload: %v\n", data.ID, data.Payload)
+```
+
+**Use Cases:**
+- Tests (to avoid blocking)
+- Polling-based consumers
+- Optional data processing
+
+---
+
+#### `TryReadBatch(limit int) []*QueueData`
+
+Attempts to read multiple items without blocking.
+
+**Parameters:**
+- `limit` (int): Maximum items to read
+
+**Returns:**
+- `[]*QueueData`: Slice of data items (may be empty or less than limit)
+
+**Behavior:**
+- Returns **immediately** with available items
+- May return empty slice if no data available
+- May return fewer items than limit
+
+**Example:**
+```go
+items := consumer.TryReadBatch(10)
+if len(items) == 0 {
+    // No data available
+    return
+}
+
 for _, data := range items {
     fmt.Printf("Processing: %v\n", data.Payload)
 }
@@ -415,10 +563,12 @@ Checks if more data is available without consuming it.
 **Example:**
 ```go
 if consumer.HasMoreData() {
-    data := consumer.Read()
+    data := consumer.TryRead()
     // Process data
 }
 ```
+
+**Note:** Use `TryRead()` after checking `HasMoreData()` to avoid blocking
 
 ---
 

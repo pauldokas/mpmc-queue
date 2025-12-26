@@ -15,7 +15,7 @@ Practical guide for using mpmc-queue in your applications.
 
 ## Quick Start
 
-### Basic Producer-Consumer
+### Basic Producer-Consumer (Blocking)
 
 ```go
 package main
@@ -26,14 +26,18 @@ import (
 )
 
 func main() {
-    // Create queue
+    // Create queue with default 10-minute TTL
     q := queue.NewQueue("my-queue")
     defer q.Close()
 
-    // Produce
-    q.Enqueue("Hello, World!")
+    // Produce (blocks if queue is full)
+    err := q.Enqueue("Hello, World!")
+    if err != nil {
+        fmt.Printf("Enqueue failed: %v\n", err)
+        return
+    }
 
-    // Consume
+    // Consume (blocks if no data available)
     consumer := q.AddConsumer()
     data := consumer.Read()
     
@@ -41,6 +45,32 @@ func main() {
         fmt.Println(data.Payload) // Output: Hello, World!
     }
 }
+```
+
+### Basic Producer-Consumer (Non-Blocking)
+
+```go
+q := queue.NewQueue("my-queue")
+defer q.Close()
+
+// Non-blocking produce
+err := q.TryEnqueue("Hello, World!")
+if err != nil {
+    // Queue is full, handle accordingly
+    fmt.Printf("Queue full: %v\n", err)
+    return
+}
+
+// Non-blocking consume
+consumer := q.AddConsumer()
+data := consumer.TryRead()
+
+if data == nil {
+    fmt.Println("No data available")
+    return
+}
+
+fmt.Println(data.Payload)
 ```
 
 ---
@@ -62,9 +92,9 @@ consumer3 := q.AddConsumer()
 
 // Each consumer reads all items independently
 for i := 0; i < 2; i++ {
-    data1 := consumer1.Read()
-    data2 := consumer2.Read()
-    data3 := consumer3.Read()
+    data1 := consumer1.TryRead()
+    data2 := consumer2.TryRead()
+    data3 := consumer3.TryRead()
     
     // All three get the same data
     fmt.Printf("C1: %v, C2: %v, C3: %v\n", 
@@ -82,14 +112,15 @@ defer q.Close()
 
 var wg sync.WaitGroup
 
-// Start 10 producers
+// Start 10 producers (using non-blocking for error handling)
 for i := 0; i < 10; i++ {
     wg.Add(1)
     go func(id int) {
         defer wg.Done()
         for j := 0; j < 100; j++ {
             payload := fmt.Sprintf("Producer %d, Item %d", id, j)
-            if err := q.Enqueue(payload); err != nil {
+            if err := q.TryEnqueue(payload); err != nil {
+                // Handle full queue - could retry or drop
                 log.Printf("Enqueue failed: %v", err)
             }
         }
@@ -97,6 +128,118 @@ for i := 0; i < 10; i++ {
 }
 
 wg.Wait()
+
+// Alternative: Use blocking Enqueue to wait for space
+go func() {
+    for j := 0; j < 100; j++ {
+        payload := fmt.Sprintf("Item %d", j)
+        q.Enqueue(payload) // Blocks if queue is full
+    }
+}()
+```
+
+---
+
+## Blocking vs Non-Blocking Operations
+
+### When to Use Blocking Operations
+
+**Use blocking `Enqueue()` and `Read()` when:**
+- You want producers to automatically wait for space
+- You want consumers to automatically wait for data
+- Building event-driven or stream processing systems
+- Worker threads that continuously process data
+
+```go
+// Worker that continuously processes data
+func worker(consumer *queue.Consumer) {
+    for {
+        // Blocks until data is available
+        data := consumer.Read()
+        if data == nil {
+            // Queue was closed
+            return
+        }
+        
+        // Process data
+        process(data.Payload)
+    }
+}
+```
+
+### When to Use Non-Blocking Operations
+
+**Use `TryEnqueue()` and `TryRead()` when:**
+- Writing tests (avoid hanging tests)
+- Implementing custom timeout logic
+- Non-critical data that can be dropped if queue is full
+- Polling-based consumers
+- When you need immediate feedback
+
+```go
+// Test that shouldn't hang
+func TestMyQueue(t *testing.T) {
+    q := queue.NewQueue("test")
+    defer q.Close()
+    
+    // Use Try* to avoid blocking
+    err := q.TryEnqueue("test-data")
+    if err != nil {
+        t.Fatalf("Failed to enqueue: %v", err)
+    }
+    
+    consumer := q.AddConsumer()
+    data := consumer.TryRead()
+    if data == nil {
+        t.Fatal("Expected data")
+    }
+}
+```
+
+### Mixed Pattern: Non-Blocking with Retry
+
+```go
+// Try with exponential backoff
+func enqueueWithRetry(q *queue.Queue, payload any, maxRetries int) error {
+    backoff := 10 * time.Millisecond
+    
+    for i := 0; i < maxRetries; i++ {
+        err := q.TryEnqueue(payload)
+        if err == nil {
+            return nil
+        }
+        
+        if _, ok := err.(*queue.MemoryLimitError); ok {
+            time.Sleep(backoff)
+            backoff *= 2
+            continue
+        }
+        
+        return err // Other errors are fatal
+    }
+    
+    return fmt.Errorf("failed after %d retries", maxRetries)
+}
+```
+
+### Batch Operations
+
+```go
+// Blocking batch - waits for all items to fit
+items := []any{"item1", "item2", "item3"}
+q.EnqueueBatch(items) // Blocks until all can be added
+
+// Non-blocking batch - fails immediately if won't fit
+err := q.TryEnqueueBatch(items)
+if err != nil {
+    // Try smaller batch or handle error
+}
+
+// Blocking batch read - waits for at least 1 item
+batch := consumer.ReadBatch(10) // Returns 1-10 items
+
+// Non-blocking batch read - returns immediately
+batch := consumer.TryReadBatch(10) // May return 0 items
 ```
 
 ---

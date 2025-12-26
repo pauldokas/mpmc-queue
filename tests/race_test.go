@@ -15,7 +15,7 @@ func TestConcurrentDequeueNoRace(t *testing.T) {
 
 	// Enqueue a single item that will be read by many consumers concurrently
 	testPayload := "shared data item"
-	if err := q.Enqueue(testPayload); err != nil {
+	if err := q.TryEnqueue(testPayload); err != nil {
 		t.Fatalf("Failed to enqueue: %v", err)
 	}
 
@@ -33,7 +33,7 @@ func TestConcurrentDequeueNoRace(t *testing.T) {
 			defer wg.Done()
 
 			consumer := q.AddConsumer()
-			data := consumer.Read()
+			data := consumer.TryRead()
 
 			if data != nil {
 				// Access all fields of QueueData - this would race if not properly synchronized
@@ -77,7 +77,7 @@ func TestMassiveConcurrentDequeue(t *testing.T) {
 	// Enqueue multiple items
 	const numItems = 10
 	for i := 0; i < numItems; i++ {
-		if err := q.Enqueue(i); err != nil {
+		if err := q.TryEnqueue(i); err != nil {
 			t.Fatalf("Failed to enqueue item %d: %v", i, err)
 		}
 	}
@@ -95,7 +95,7 @@ func TestMassiveConcurrentDequeue(t *testing.T) {
 
 			// Each consumer reads all items
 			for j := 0; j < numItems; j++ {
-				data := consumer.Read()
+				data := consumer.TryRead()
 				if data != nil {
 					// Access all fields - would race if QueueData was being modified
 					_ = data.ID
@@ -137,7 +137,7 @@ func TestConcurrentProducersAndConsumersNoRace(t *testing.T) {
 					"producer": producerID,
 					"item":     j,
 				}
-				q.Enqueue(payload)
+				q.TryEnqueue(payload)
 			}
 		}(i)
 	}
@@ -152,7 +152,7 @@ func TestConcurrentProducersAndConsumersNoRace(t *testing.T) {
 			// Read until we've consumed a reasonable amount
 			readCount := 0
 			for readCount < itemsPerProducer {
-				data := consumer.Read()
+				data := consumer.TryRead()
 				if data != nil {
 					// Access all fields
 					_ = data.ID
@@ -181,7 +181,7 @@ func TestQueueDataImmutability(t *testing.T) {
 	defer q.Close()
 
 	testPayload := "immutable payload"
-	if err := q.Enqueue(testPayload); err != nil {
+	if err := q.TryEnqueue(testPayload); err != nil {
 		t.Fatalf("Failed to enqueue: %v", err)
 	}
 

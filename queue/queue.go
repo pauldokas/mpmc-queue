@@ -28,20 +28,29 @@ type Queue struct {
 	wg                sync.WaitGroup
 	expirationEnabled bool
 	createdAt         time.Time
+	enqueueNotify     chan struct{} // Notifies consumers when data is enqueued
+	dequeueNotify     chan struct{} // Notifies producers when data is consumed/expired
 }
 
-// NewQueue creates a new queue with the specified name
+// NewQueue creates a new queue with the specified name and default TTL
 func NewQueue(name string) *Queue {
+	return NewQueueWithTTL(name, DefaultTTL)
+}
+
+// NewQueueWithTTL creates a new queue with a custom TTL
+func NewQueueWithTTL(name string, ttl time.Duration) *Queue {
 	memoryTracker := NewMemoryTracker()
 
 	queue := &Queue{
 		name:              name,
 		data:              NewChunkedList(memoryTracker),
 		memoryTracker:     memoryTracker,
-		ttl:               DefaultTTL,
+		ttl:               ttl,
 		stopChan:          make(chan struct{}),
 		expirationEnabled: true,
 		createdAt:         time.Now(),
+		enqueueNotify:     make(chan struct{}, 1), // Buffered to avoid blocking
+		dequeueNotify:     make(chan struct{}, 1), // Buffered to avoid blocking
 	}
 
 	queue.consumers = NewConsumerManager(queue)
@@ -53,30 +62,70 @@ func NewQueue(name string) *Queue {
 	return queue
 }
 
-// NewQueueWithTTL creates a new queue with a custom TTL
-func NewQueueWithTTL(name string, ttl time.Duration) *Queue {
-	queue := NewQueue(name)
-	queue.ttl = ttl
-	return queue
-}
-
 // GetName returns the queue's name
 func (q *Queue) GetName() string {
 	return q.name
 }
 
-// Enqueue adds data to the queue
-func (q *Queue) Enqueue(payload any) error {
+// TryEnqueue attempts to add data to the queue without blocking
+// Returns an error if the queue is full (memory limit exceeded)
+func (q *Queue) TryEnqueue(payload any) error {
 	data := NewQueueData(payload, q.name)
 
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 
-	return q.data.Enqueue(data)
+	err := q.data.Enqueue(data)
+	if err == nil {
+		// Notify waiting consumers
+		select {
+		case q.enqueueNotify <- struct{}{}:
+		default:
+		}
+	}
+	return err
 }
 
-// EnqueueBatch adds multiple items to the queue
-func (q *Queue) EnqueueBatch(payloads []any) error {
+// Enqueue adds data to the queue, blocking if the queue is full
+// Blocks until space becomes available (via expiration or dequeue)
+func (q *Queue) Enqueue(payload any) error {
+	data := NewQueueData(payload, q.name)
+
+	for {
+		q.mutex.Lock()
+		err := q.data.Enqueue(data)
+		if err == nil {
+			q.mutex.Unlock()
+			// Notify waiting consumers
+			select {
+			case q.enqueueNotify <- struct{}{}:
+			default:
+			}
+			return nil
+		}
+
+		// Check if it's a memory limit error
+		if _, ok := err.(*MemoryLimitError); !ok {
+			q.mutex.Unlock()
+			return err // Return non-memory errors immediately
+		}
+		q.mutex.Unlock()
+
+		// Wait for space to become available
+		select {
+		case <-q.dequeueNotify:
+			// Space might be available, retry
+			continue
+		case <-q.stopChan:
+			return fmt.Errorf("queue closed while waiting to enqueue")
+		}
+	}
+}
+
+// TryEnqueueBatch attempts to add multiple items to the queue without blocking
+// Returns an error if any item would exceed the memory limit
+// This is an atomic operation - either all items are added or none are
+func (q *Queue) TryEnqueueBatch(payloads []any) error {
 	if len(payloads) == 0 {
 		return nil
 	}
@@ -106,7 +155,69 @@ func (q *Queue) EnqueueBatch(payloads []any) error {
 		}
 	}
 
+	// Notify waiting consumers
+	select {
+	case q.enqueueNotify <- struct{}{}:
+	default:
+	}
+
 	return nil
+}
+
+// EnqueueBatch adds multiple items to the queue, blocking if the queue is full
+// This is an atomic operation - either all items are added or it blocks until space is available
+func (q *Queue) EnqueueBatch(payloads []any) error {
+	if len(payloads) == 0 {
+		return nil
+	}
+
+	// Create all data items upfront
+	dataItems := make([]*QueueData, len(payloads))
+	for i, payload := range payloads {
+		dataItems[i] = NewQueueData(payload, q.name)
+	}
+
+	for {
+		q.mutex.Lock()
+
+		// Check if all items can be added
+		canAddAll := true
+		for _, data := range dataItems {
+			if !q.memoryTracker.CanAddData(data) {
+				canAddAll = false
+				break
+			}
+		}
+
+		if canAddAll {
+			// Add all items
+			for _, data := range dataItems {
+				if err := q.data.Enqueue(data); err != nil {
+					q.mutex.Unlock()
+					return err
+				}
+			}
+			q.mutex.Unlock()
+
+			// Notify waiting consumers
+			select {
+			case q.enqueueNotify <- struct{}{}:
+			default:
+			}
+			return nil
+		}
+
+		q.mutex.Unlock()
+
+		// Wait for space to become available
+		select {
+		case <-q.dequeueNotify:
+			// Space might be available, retry
+			continue
+		case <-q.stopChan:
+			return fmt.Errorf("queue closed while waiting to enqueue batch")
+		}
+	}
 }
 
 // AddConsumer adds a new consumer to the queue
@@ -275,6 +386,12 @@ func (q *Queue) cleanupExpiredItems() int {
 		// Notify consumers about expired items
 		newFirstElement := q.data.GetFirstElement()
 		q.consumers.NotifyAllConsumersOfExpiration(expiredCounts, newFirstElement, removalInfo)
+
+		// Notify waiting producers that space is available
+		select {
+		case q.dequeueNotify <- struct{}{}:
+		default:
+		}
 	}
 
 	return expiredCount

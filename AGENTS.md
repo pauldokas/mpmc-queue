@@ -1,6 +1,6 @@
 # Agent Development Guide for mpmc-queue
 
-Essential guide for AI coding agents working on mpmc-queue - a high-performance, thread-safe multi-producer multi-consumer queue in Go with 1MB memory limit, time-based expiration, and independent consumer tracking.
+Essential guide for AI coding agents working on mpmc-queue - a high-performance, thread-safe multi-producer multi-consumer queue in Go with 1MB memory limit, time-based expiration, independent consumer tracking, and blocking/non-blocking operations.
 
 ## Quick Reference
 
@@ -8,7 +8,7 @@ Essential guide for AI coding agents working on mpmc-queue - a high-performance,
 
 **Key Files**: `queue/queue.go` (main ops) | `queue/consumer.go` (consumers) | `queue/data.go` (data types) | `queue/chunked_list.go` (storage) | `queue/memory.go` (tracking)
 
-**Critical Rules**: ALWAYS acquire queue lock before consumer lock | ALWAYS run tests with `-race` flag | NEVER modify QueueData after creation
+**Critical Rules**: ALWAYS acquire queue lock before consumer lock | ALWAYS run tests with `-race` flag | NEVER modify QueueData after creation | Use Try* methods in tests to avoid blocking
 
 ## Commands
 
@@ -19,6 +19,8 @@ go test ./tests -v -race                     # Race detection (ALWAYS USE)
 go test ./tests -v -run TestEnqueueDequeue  # Single test
 go test ./tests -v -run "TestMultiple.*"    # Pattern match
 go test ./tests -bench=. -benchmem -v       # Benchmarks with memory
+go test ./tests -v -timeout 5m               # Increase timeout for stress tests
+go test ./tests -race -run TestExtreme -v    # Stress test with race detection
 ```
 
 ### Building & Linting
@@ -28,6 +30,14 @@ go build -race ./...  # Build with race detection
 go fmt ./...          # Format code
 go vet ./...          # Static analysis
 go mod tidy           # Clean dependencies
+```
+
+### Coverage
+```bash
+go test ./tests -coverprofile=coverage.out           # Generate coverage
+go tool cover -html=coverage.out -o coverage.html   # HTML report
+go tool cover -func=coverage.out                     # Function coverage
+go tool cover -func=coverage.out | grep total       # Total coverage %
 ```
 
 ### Examples
@@ -160,6 +170,54 @@ q.wg.Wait()
 ### Channels
 Use buffered channels to prevent blocking: `make(chan int, 100)`
 
+## Blocking vs Non-Blocking Operations
+
+### Blocking API (Default)
+**Enqueue/Read block** when queue is full/empty respectively:
+```go
+// Blocks until space available
+err := q.Enqueue(data)           
+
+// Blocks until data available
+data := consumer.Read()          
+
+// Blocks until at least 1 item available
+batch := consumer.ReadBatch(10)  
+```
+
+**When to use**: Production code where waiting is acceptable
+
+### Non-Blocking API (Try* methods)
+**Try* methods return immediately**:
+```go
+// Returns error immediately if full
+err := q.TryEnqueue(data)              
+
+// Returns nil immediately if empty
+data := consumer.TryRead()             
+
+// Returns partial/empty batch immediately
+batch := consumer.TryReadBatch(10)     
+```
+
+**When to use**: 
+- Tests (to avoid hanging tests)
+- Non-critical operations
+- When timeout handling is needed
+- Performance-critical tight loops
+
+### Testing Guidelines
+**ALWAYS use Try* methods in tests** unless specifically testing blocking behavior:
+```go
+// ✅ GOOD: Won't hang test
+err := q.TryEnqueue(payload)
+data := consumer.TryRead()
+
+// ❌ BAD: May hang test if queue full/empty
+err := q.Enqueue(payload)
+data := consumer.Read()
+```
+
 ## Memory Management
 
 1. **Pre-validate** before adding: `MemoryTracker.CanAddData()`
@@ -208,6 +266,15 @@ wg.Wait()
 - Consumer position updates
 - Expiration logic
 
+### Atomic Operations in Tests
+When testing concurrent code with shared counters, use atomic operations:
+```go
+var counter int64
+// In goroutine: atomic.AddInt64(&counter, 1)
+// To read: atomic.LoadInt64(&counter)
+```
+This prevents race conditions in the test code itself.
+
 ## Architecture Essentials
 
 ### Component Hierarchy
@@ -224,9 +291,10 @@ Queue (RWMutex-protected coordinator)
 2. **Independence**: Each consumer reads all data at own pace
 3. **Lock Granularity**: Separate mutexes for queue and consumers
 4. **Snapshot Pattern**: Read state without holding locks to avoid deadlocks
-5. **Background Expiration**: 30-second intervals, 10-minute default TTL
+5. **Background Expiration**: 30-second intervals, configurable TTL (default 10 minutes)
 6. **Pre-validation**: Check limits before allocating
 7. **TOCTOU Prevention**: Hold locks during critical read operations
+8. **Blocking Operations**: Enqueue/Read block by default; Try* methods for non-blocking
 
 ### Key Constants
 ```go

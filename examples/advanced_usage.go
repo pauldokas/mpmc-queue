@@ -21,7 +21,7 @@ func main() {
 
 	// Add some items
 	for i := 1; i <= 5; i++ {
-		q.Enqueue(fmt.Sprintf("Item %d", i))
+		q.TryEnqueue(fmt.Sprintf("Item %d", i))
 		fmt.Printf("   Enqueued: Item %d\n", i)
 	}
 
@@ -90,7 +90,7 @@ func main() {
 			fmt.Printf("   Consumer %d ID: %s\n", consumerID, consumer.GetID())
 			
 			for {
-				data := consumer.Read()
+				data := consumer.TryRead()
 				if data == nil {
 					time.Sleep(50 * time.Millisecond)
 					// Check if we should stop (no more producers)

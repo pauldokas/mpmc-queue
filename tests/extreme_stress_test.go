@@ -44,7 +44,7 @@ func TestExtremeProducerConsumerStress(t *testing.T) {
 					"time":     time.Now(),
 				}
 
-				if err := q.Enqueue(payload); err != nil {
+				if err := q.TryEnqueue(payload); err != nil {
 					// Memory limit is expected, not an error
 					if _, ok := err.(*queue.MemoryLimitError); !ok {
 						t.Errorf("Producer %d unexpected error: %v", id, err)
@@ -68,7 +68,7 @@ func TestExtremeProducerConsumerStress(t *testing.T) {
 			readCount := 0
 
 			for time.Since(start) < testDuration {
-				data := consumer.Read()
+				data := consumer.TryRead()
 				if data != nil {
 					readCount++
 					consumed.Add(1)
@@ -128,7 +128,7 @@ func TestExpirationDuringHeavyLoad(t *testing.T) {
 			count := 0
 
 			for time.Since(start) < testDuration {
-				if err := q.Enqueue(count); err != nil {
+				if err := q.TryEnqueue(count); err != nil {
 					if _, ok := err.(*queue.MemoryLimitError); !ok {
 						errors.Add(1)
 					}
@@ -149,7 +149,7 @@ func TestExpirationDuringHeavyLoad(t *testing.T) {
 			var lastValue *int
 
 			for time.Since(start) < testDuration {
-				data := consumer.Read()
+				data := consumer.TryRead()
 				if data != nil {
 					// Check that values don't go backwards (data corruption indicator)
 					if val, ok := data.Payload.(int); ok {
@@ -185,7 +185,7 @@ func TestConsumerPositionIntegrityUnderLoad(t *testing.T) {
 	// Enqueue sequential items
 	const numItems = 500
 	for i := 0; i < numItems; i++ {
-		q.Enqueue(i)
+		q.TryEnqueue(i)
 	}
 
 	// Multiple consumers read all items
@@ -204,7 +204,7 @@ func TestConsumerPositionIntegrityUnderLoad(t *testing.T) {
 			readCount := 0
 
 			for {
-				data := consumer.Read()
+				data := consumer.TryRead()
 				if data == nil {
 					break
 				}

@@ -31,7 +31,7 @@ func TestEnqueueDequeue(t *testing.T) {
 
 	// Test enqueue
 	testData := "test payload"
-	err := q.Enqueue(testData)
+	err := q.TryEnqueue(testData)
 	if err != nil {
 		t.Fatalf("Failed to enqueue: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestEnqueueDequeue(t *testing.T) {
 
 	// Test consumer
 	consumer := q.AddConsumer()
-	data := consumer.Read()
+	data := consumer.TryRead()
 
 	if data == nil {
 		t.Fatal("Expected data, got nil")
@@ -79,7 +79,7 @@ func TestMultipleConsumers(t *testing.T) {
 	// Enqueue test data
 	payloads := []any{"item1", "item2", "item3"}
 	for _, payload := range payloads {
-		if err := q.Enqueue(payload); err != nil {
+		if err := q.TryEnqueue(payload); err != nil {
 			t.Fatalf("Failed to enqueue %v: %v", payload, err)
 		}
 	}
@@ -90,8 +90,8 @@ func TestMultipleConsumers(t *testing.T) {
 
 	// Both consumers should read all items independently
 	for i, expectedPayload := range payloads {
-		data1 := consumer1.Read()
-		data2 := consumer2.Read()
+		data1 := consumer1.TryRead()
+		data2 := consumer2.TryRead()
 
 		if data1 == nil || data2 == nil {
 			t.Fatalf("Consumer read failed at index %d", i)
@@ -104,7 +104,7 @@ func TestMultipleConsumers(t *testing.T) {
 	}
 
 	// No more data should be available
-	if consumer1.Read() != nil || consumer2.Read() != nil {
+	if consumer1.TryRead() != nil || consumer2.TryRead() != nil {
 		t.Error("No more data should be available")
 	}
 }
@@ -116,15 +116,15 @@ func TestNewConsumerReadsAllData(t *testing.T) {
 	// Enqueue data
 	payloads := []any{"item1", "item2", "item3"}
 	for _, payload := range payloads {
-		q.Enqueue(payload)
+		q.TryEnqueue(payload)
 	}
 
 	// Create consumer and read some data
 	consumer1 := q.AddConsumer()
-	consumer1.Read() // Read first item
+	consumer1.TryRead() // Read first item
 
 	// Add more data
-	q.Enqueue("item4")
+	q.TryEnqueue("item4")
 
 	// Create new consumer
 	consumer2 := q.AddConsumer()
@@ -132,7 +132,7 @@ func TestNewConsumerReadsAllData(t *testing.T) {
 	// New consumer should read all data from beginning
 	allData := []any{"item1", "item2", "item3", "item4"}
 	for i, expectedPayload := range allData {
-		data := consumer2.Read()
+		data := consumer2.TryRead()
 		if data == nil {
 			t.Fatalf("Consumer2 failed to read item at index %d", i)
 		}
@@ -157,7 +157,7 @@ func TestConcurrentProducers(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < itemsPerProducer; j++ {
 				payload := map[string]int{"producer": producerID, "item": j}
-				if err := q.Enqueue(payload); err != nil {
+				if err := q.TryEnqueue(payload); err != nil {
 					t.Errorf("Producer %d failed to enqueue item %d: %v", producerID, j, err)
 					return
 				}
@@ -178,7 +178,7 @@ func TestConcurrentProducers(t *testing.T) {
 	consumer := q.AddConsumer()
 	count := int64(0)
 	for {
-		data := consumer.Read()
+		data := consumer.TryRead()
 		if data == nil {
 			break
 		}
@@ -199,7 +199,7 @@ func TestConcurrentConsumers(t *testing.T) {
 
 	// Enqueue items
 	for i := 0; i < numItems; i++ {
-		q.Enqueue(i)
+		q.TryEnqueue(i)
 	}
 
 	// Create consumers and track what they read
@@ -214,7 +214,7 @@ func TestConcurrentConsumers(t *testing.T) {
 			defer wg.Done()
 			consumer := consumers[consumerIndex]
 			for {
-				data := consumer.Read()
+				data := consumer.TryRead()
 				if data == nil {
 					break
 				}
@@ -246,7 +246,7 @@ func TestMemoryLimit(t *testing.T) {
 	// Enqueue items until memory limit is reached
 	enqueueCount := 0
 	for {
-		err := q.Enqueue(largePayload)
+		err := q.TryEnqueue(largePayload)
 		if err != nil {
 			// Should get memory limit error
 			if _, isMemoryError := err.(*queue.MemoryLimitError); !isMemoryError {
@@ -279,7 +279,7 @@ func TestEnqueueBatch(t *testing.T) {
 
 	// Test batch enqueue
 	payloads := []any{"batch1", "batch2", "batch3", "batch4", "batch5"}
-	err := q.EnqueueBatch(payloads)
+	err := q.TryEnqueueBatch(payloads)
 	if err != nil {
 		t.Fatalf("Failed to enqueue batch: %v", err)
 	}
@@ -293,7 +293,7 @@ func TestEnqueueBatch(t *testing.T) {
 	// Verify consumer can read all items in order
 	consumer := q.AddConsumer()
 	for i, expectedPayload := range payloads {
-		data := consumer.Read()
+		data := consumer.TryRead()
 		if data == nil {
 			t.Fatalf("Failed to read item at index %d", i)
 		}
@@ -310,7 +310,7 @@ func TestChunkedStorage(t *testing.T) {
 	// Enqueue more than 1000 items to test multiple chunks
 	const numItems = 2500
 	for i := 0; i < numItems; i++ {
-		err := q.Enqueue(i)
+		err := q.TryEnqueue(i)
 		if err != nil {
 			t.Fatalf("Failed to enqueue item %d: %v", i, err)
 		}
@@ -325,7 +325,7 @@ func TestChunkedStorage(t *testing.T) {
 	// Verify consumer can read all items in order
 	consumer := q.AddConsumer()
 	for i := 0; i < numItems; i++ {
-		data := consumer.Read()
+		data := consumer.TryRead()
 		if data == nil {
 			t.Fatalf("Failed to read item at index %d", i)
 		}
@@ -335,7 +335,7 @@ func TestChunkedStorage(t *testing.T) {
 	}
 
 	// No more data should be available
-	if consumer.Read() != nil {
+	if consumer.TryRead() != nil {
 		t.Error("No more data should be available")
 	}
 }
@@ -346,7 +346,7 @@ func TestConsumerStats(t *testing.T) {
 
 	// Enqueue items
 	for i := 0; i < 10; i++ {
-		q.Enqueue(i)
+		q.TryEnqueue(i)
 	}
 
 	consumer := q.AddConsumer()
@@ -362,7 +362,7 @@ func TestConsumerStats(t *testing.T) {
 
 	// Read some items
 	for i := 0; i < 5; i++ {
-		consumer.Read()
+		consumer.TryRead()
 	}
 
 	// Check updated stats

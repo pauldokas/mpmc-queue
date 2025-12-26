@@ -21,7 +21,7 @@ func main() {
 	// Enqueue some data
 	messages := []string{"Hello", "World", "from", "Queue"}
 	for i, msg := range messages {
-		err := q.Enqueue(msg)
+		err := q.TryEnqueue(msg)
 		if err != nil {
 			log.Fatalf("Failed to enqueue message %d: %v", i, err)
 		}
@@ -35,7 +35,7 @@ func main() {
 	// Read messages
 	fmt.Println("   Reading messages:")
 	for {
-		data := consumer.Read()
+		data := consumer.TryRead()
 		if data == nil {
 			break
 		}
@@ -47,7 +47,7 @@ func main() {
 
 	// Add more data
 	for i := 1; i <= 5; i++ {
-		q.Enqueue(fmt.Sprintf("Item %d", i))
+		q.TryEnqueue(fmt.Sprintf("Item %d", i))
 	}
 
 	// Create multiple consumers
@@ -81,7 +81,7 @@ func main() {
 
 	// Enqueue batch
 	batchData := []any{"Batch1", "Batch2", "Batch3", "Batch4"}
-	err := q.EnqueueBatch(batchData)
+	err := q.TryEnqueueBatch(batchData)
 	if err != nil {
 		log.Fatalf("Failed to enqueue batch: %v", err)
 	}
@@ -89,7 +89,7 @@ func main() {
 
 	// Read batch
 	consumer3 := q.AddConsumer()
-	batch := consumer3.ReadBatch(2)
+	batch := consumer3.TryReadBatch(2)
 	fmt.Printf("   Read batch of %d items: %v\n", len(batch), batch)
 
 	// Queue statistics
@@ -111,7 +111,7 @@ func main() {
 
 	// Event history example
 	fmt.Println("\n6. Event History:")
-	q.Enqueue("Tracked Item")
+	q.TryEnqueue("Tracked Item")
 	trackedConsumer := q.AddConsumer()
 	data := trackedConsumer.Read()
 	if data != nil {
