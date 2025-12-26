@@ -3,6 +3,7 @@ package queue
 import (
 	"container/list"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,6 +26,7 @@ type Consumer struct {
 	lastReadTime   time.Time       // For tracking consumer activity
 	totalItemsRead int64           // Total items this consumer has read
 	dequeueHistory []DequeueRecord // Track dequeue events locally
+	closed         atomic.Bool     // Tracks if consumer is closed
 }
 
 // NewConsumer creates a new consumer
@@ -395,7 +397,12 @@ func (c *Consumer) UpdatePositionAfterExpiration(expiredCount int, newFirstEleme
 }
 
 // Close closes the consumer and cleans up resources
+// Safe to call multiple times (idempotent)
 func (c *Consumer) Close() {
+	// Only close once
+	if !c.closed.CompareAndSwap(false, true) {
+		return // Already closed
+	}
 	close(c.notificationCh)
 }
 

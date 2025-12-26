@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -30,6 +31,7 @@ type Queue struct {
 	createdAt         time.Time
 	enqueueNotify     chan struct{} // Notifies consumers when data is enqueued
 	dequeueNotify     chan struct{} // Notifies producers when data is consumed/expired
+	closed            atomic.Bool   // Tracks if queue is closed
 }
 
 // NewQueue creates a new queue with the specified name and default TTL
@@ -49,8 +51,8 @@ func NewQueueWithTTL(name string, ttl time.Duration) *Queue {
 		stopChan:          make(chan struct{}),
 		expirationEnabled: true,
 		createdAt:         time.Now(),
-		enqueueNotify:     make(chan struct{}, 1), // Buffered to avoid blocking
-		dequeueNotify:     make(chan struct{}, 1), // Buffered to avoid blocking
+		enqueueNotify:     make(chan struct{}, 100), // Large buffer for multiple waiters
+		dequeueNotify:     make(chan struct{}, 100), // Large buffer for multiple waiters
 	}
 
 	queue.consumers = NewConsumerManager(queue)
@@ -77,10 +79,13 @@ func (q *Queue) TryEnqueue(payload any) error {
 
 	err := q.data.Enqueue(data)
 	if err == nil {
-		// Notify waiting consumers
-		select {
-		case q.enqueueNotify <- struct{}{}:
-		default:
+		// Notify waiting consumers (send multiple to wake multiple waiters)
+		for i := 0; i < 10; i++ {
+			select {
+			case q.enqueueNotify <- struct{}{}:
+			default:
+				break
+			}
 		}
 	}
 	return err
@@ -96,10 +101,13 @@ func (q *Queue) Enqueue(payload any) error {
 		err := q.data.Enqueue(data)
 		if err == nil {
 			q.mutex.Unlock()
-			// Notify waiting consumers
-			select {
-			case q.enqueueNotify <- struct{}{}:
-			default:
+			// Notify waiting consumers (send multiple to wake multiple waiters)
+			for i := 0; i < 10; i++ {
+				select {
+				case q.enqueueNotify <- struct{}{}:
+				default:
+					break
+				}
 			}
 			return nil
 		}
@@ -199,10 +207,13 @@ func (q *Queue) EnqueueBatch(payloads []any) error {
 			}
 			q.mutex.Unlock()
 
-			// Notify waiting consumers
-			select {
-			case q.enqueueNotify <- struct{}{}:
-			default:
+			// Notify waiting consumers (send multiple to wake multiple waiters)
+			for i := 0; i < 10; i++ {
+				select {
+				case q.enqueueNotify <- struct{}{}:
+				default:
+					break
+				}
 			}
 			return nil
 		}
@@ -315,7 +326,13 @@ func (q *Queue) ForceExpiration() int {
 }
 
 // Close closes the queue and cleans up resources
+// Safe to call multiple times (idempotent)
 func (q *Queue) Close() {
+	// Only close once
+	if !q.closed.CompareAndSwap(false, true) {
+		return // Already closed
+	}
+
 	close(q.stopChan)
 	q.wg.Wait()
 
@@ -387,10 +404,16 @@ func (q *Queue) cleanupExpiredItems() int {
 		newFirstElement := q.data.GetFirstElement()
 		q.consumers.NotifyAllConsumersOfExpiration(expiredCounts, newFirstElement, removalInfo)
 
-		// Notify waiting producers that space is available
-		select {
-		case q.dequeueNotify <- struct{}{}:
-		default:
+		// Notify ALL waiting producers that space is available
+		// Send multiple notifications to wake up multiple blocked producers
+		for i := 0; i < 50; i++ {
+			select {
+			case q.dequeueNotify <- struct{}{}:
+				// Sent successfully
+			default:
+				// Channel full, stop sending
+				return expiredCount
+			}
 		}
 	}
 

@@ -14,13 +14,20 @@ Essential guide for AI coding agents working on mpmc-queue - a high-performance,
 
 ### Testing
 ```bash
-go test ./tests -v                           # All tests
+go test ./tests -v                           # All tests (114 tests)
 go test ./tests -v -race                     # Race detection (ALWAYS USE)
 go test ./tests -v -run TestEnqueueDequeue  # Single test
 go test ./tests -v -run "TestMultiple.*"    # Pattern match
 go test ./tests -bench=. -benchmem -v       # Benchmarks with memory
 go test ./tests -v -timeout 5m               # Increase timeout for stress tests
 go test ./tests -race -run TestExtreme -v    # Stress test with race detection
+
+# Test specific categories
+go test ./tests -v -run "TestConsumer.*"     # Consumer management tests
+go test ./tests -v -run "TestClose.*"        # Lifecycle and close tests
+go test ./tests -v -run "TestBlocking.*"     # Blocking behavior tests
+go test ./tests -v -run "Test.*Batch.*"      # Batch operation tests
+go test ./tests -v -run "TestMemory.*"       # Memory and error tests
 ```
 
 ### Building & Linting

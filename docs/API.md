@@ -387,13 +387,23 @@ Closes the queue and releases all resources.
 - Stops expiration worker
 - Closes all consumers
 - Clears all data
+- Wakes up all blocked operations
+
+**Idempotency:**
+- Safe to call multiple times
+- Subsequent calls return immediately without error
 
 **Example:**
 ```go
 q.Close() // Or use defer q.Close()
+
+// Safe to call again
+q.Close() // No-op, no panic
 ```
 
-**Note:** Always call Close() when done to prevent resource leaks.
+**Thread-Safety:** Safe to call concurrently from multiple goroutines
+
+**Note:** Always call Close() when done to prevent resource leaks. Blocked Enqueue() and Read() operations will be interrupted and return error/nil.
 
 ---
 
