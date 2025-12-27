@@ -11,7 +11,7 @@ A high-performance, thread-safe, memory-constrained multi-producer multi-consume
 ## Features
 
 - ✅ **Thread Safe**: Full concurrency support for multiple producers and consumers (all race conditions fixed)
-- ✅ **Memory Constrained**: Strict 1MB memory limit with real-time usage tracking (no memory leaks)
+- ✅ **Memory Constrained**: Configurable memory limit (default 1MB) with real-time usage tracking
 - ✅ **Time-based Expiration**: Automatic cleanup of expired items (10-minute default TTL)
 - ✅ **Independent Consumers**: Each consumer reads all data at their own pace
 - ✅ **Chunked Storage**: Efficient storage using doubly-linked list of 1000-item chunks
@@ -20,7 +20,7 @@ A high-performance, thread-safe, memory-constrained multi-producer multi-consume
 - ✅ **Batch Operations**: Atomic batch enqueue and efficient batch read operations
 - ✅ **Rich Statistics**: Comprehensive metrics for queue and consumer performance
 - ✅ **Position Tracking**: Accurate consumer position even during expiration
-- ✅ **Atomic Operations**: ChunkNode.Size uses atomic int32 for lock-free access
+- ✅ **Atomic Operations**: Lock-free stats and RCU-based consumer management
 
 ## Architecture
 
@@ -129,18 +129,24 @@ data2 := consumer2.Read() // Also gets "Message 1"
 ```
 
 ### Batch Operations
+ 
+ ```go
+ // Batch enqueue (blocking - waits until all items can be added)
+ items := []any{"item1", "item2", "item3"}
+ err := q.EnqueueBatch(items)
+ 
+ // Non-blocking batch enqueue
+ err := q.TryEnqueueBatch(items)
+ 
+ // Context-aware batch enqueue
+ ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+ defer cancel()
+ err := q.EnqueueBatchWithContext(ctx, items)
+ 
+ // Batch read (blocking - waits for at least 1 item, returns up to 10)
+ consumer := q.AddConsumer()
+ batch := consumer.ReadBatch(10)
 
-```go
-// Batch enqueue (blocking - waits until all items can be added)
-items := []any{"item1", "item2", "item3"}
-err := q.EnqueueBatch(items)
-
-// Non-blocking batch enqueue
-err := q.TryEnqueueBatch(items)
-
-// Batch read (blocking - waits for at least 1 item, returns up to 10)
-consumer := q.AddConsumer()
-batch := consumer.ReadBatch(10)
 
 // Non-blocking batch read
 batch := consumer.TryReadBatch(10) // Returns immediately with available items
@@ -193,8 +199,9 @@ for _, cs := range consumerStats {
 ### Queue Methods
 
 #### Creation
-- `NewQueue(name string) *Queue` - Create queue with default TTL
+- `NewQueue(name string) *Queue` - Create queue with default settings
 - `NewQueueWithTTL(name, ttl) *Queue` - Create queue with custom TTL
+- `NewQueueWithConfig(name, config) *Queue` - Create queue with custom config (TTL, MaxMemory)
 
 #### Data Operations (Blocking)
 - `Enqueue(payload any) error` - Add single item (blocks if queue full)
@@ -432,13 +439,14 @@ if qErr, ok := err.(*queue.QueueError); ok {
 ### Thread Safety
 - RWMutex for queue operations
 - Individual mutexes for consumer state
-- Lock-free operations where possible
+- Lock-free operations where possible (stats, consumer list iteration)
+- Atomic counters for high-performance metrics
 
 ## Limitations
 
 ### Memory Management
-- **Hard Limit**: The queue enforces a strict 1MB memory limit (default) based on *estimated* usage.
-- **Estimation**: Memory usage is calculated using reflection and is approximate. It accounts for overhead but may deviate by ±10-20% from actual heap usage.
+- **Limit**: The queue enforces a memory limit (default 1MB, configurable) based on *estimated* usage.
+- **Estimation**: Memory usage is calculated using reflection and is approximate. Type sizes are cached for performance.
 - **Behavior**: When full, `Enqueue` blocks indefinitely and `TryEnqueue` returns an error immediately.
 
 ### Time-To-Live (TTL)

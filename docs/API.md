@@ -41,21 +41,53 @@ defer q.Close()
 ---
 
 #### `NewQueueWithTTL(name string, ttl time.Duration) *Queue`
+ 
+ Creates a queue with custom TTL (time-to-live).
+ 
+ **Parameters:**
+ - `name` (string): Queue identifier
+ - `ttl` (time.Duration): Time-to-live for items
+ 
+ **Returns:**
+ - `*Queue`: Initialized queue instance
+ 
+ **Example:**
+ ```go
+ q := queue.NewQueueWithTTL("short-lived", 5*time.Minute)
+ defer q.Close()
+ ```
+ 
+ ---
+ 
+ #### `NewQueueWithConfig(name string, config QueueConfig) *Queue`
+ 
+ Creates a queue with full configuration control.
+ 
+ **Parameters:**
+ - `name` (string): Queue identifier
+ - `config` (QueueConfig): Configuration options
+ 
+ **Returns:**
+ - `*Queue`: Initialized queue instance
+ 
+ **QueueConfig:**
+ ```go
+ type QueueConfig struct {
+     TTL       time.Duration // Time-to-live for items
+     MaxMemory int64         // Maximum memory in bytes
+ }
+ ```
+ 
+ **Example:**
+ ```go
+ config := queue.QueueConfig{
+     TTL:       30 * time.Minute,
+     MaxMemory: 10 * 1024 * 1024, // 10MB
+ }
+ q := queue.NewQueueWithConfig("custom-queue", config)
+ defer q.Close()
+ ```
 
-Creates a queue with custom TTL (time-to-live).
-
-**Parameters:**
-- `name` (string): Queue identifier
-- `ttl` (time.Duration): Time-to-live for items
-
-**Returns:**
-- `*Queue`: Initialized queue instance
-
-**Example:**
-```go
-q := queue.NewQueueWithTTL("short-lived", 5*time.Minute)
-defer q.Close()
-```
 
 ---
 

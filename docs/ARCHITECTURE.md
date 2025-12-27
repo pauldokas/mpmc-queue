@@ -20,7 +20,7 @@ This document describes the internal architecture, design decisions, and impleme
 mpmc-queue is a multi-producer, multi-consumer (MPMC) queue implementation optimized for:
 
 - **High Concurrency**: Multiple producers and consumers can operate simultaneously
-- **Memory Constraints**: 1MB hard limit with real-time tracking
+- **Memory Constraints**: Configurable memory limit (default 1MB) with real-time tracking
 - **Time-based Expiration**: Automatic cleanup of expired items
 - **Independent Consumers**: Each consumer maintains its own read position
 - **Thread Safety**: All operations are safe for concurrent use
@@ -30,7 +30,7 @@ mpmc-queue is a multi-producer, multi-consumer (MPMC) queue implementation optim
 - **Lock-Based**: Uses RWMutex for synchronization
 - **Chunked Storage**: Items stored in 1000-item chunks
 - **Immutable Data**: QueueData cannot be modified after creation
-- **Atomic Operations**: Size tracking uses atomic int32
+- **Atomic Operations**: Size tracking and statistics use atomic types (lock-free reads)
 - **Blocking/Non-Blocking**: Supports both blocking and non-blocking operations
 - **Configurable TTL**: Time-to-live set at queue creation (default 10 minutes)
 
@@ -175,8 +175,9 @@ map[string]*Consumer
 ---
 
 ### 7. MemoryTracker
+ 
+ Tracks memory usage with configurable limit (default 1MB).
 
-Tracks memory usage with 1MB hard limit.
 
 ```
 MemoryTracker
@@ -722,7 +723,7 @@ Where:
 
 ## Limitations
 
-1. **Memory Limit:** Hard 1MB limit (not configurable currently)
+1. **Memory Limit:** Configurable limit (default 1MB)
 2. **Expiration Granularity:** 30-second intervals
 3. **Memory Estimation:** Approximate (±10-20%)
 4. **No Persistence:** In-memory only
