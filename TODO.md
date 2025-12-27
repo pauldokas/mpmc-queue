@@ -207,13 +207,21 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 - **Files**: `queue/queue.go`, `queue/data.go`
 
 ### Add Filtering/Selection
-- **Status**: ⚠️ Not Started
-- **Task**: Allow consumers to filter items
+- **Status**: ✅ Completed (2025-12-27)
+- **Task**: Allow consumers to filter items based on predicates
 - **New Functions**:
   ```go
+  func (c *Consumer) TryReadWhere(predicate func(*QueueData) bool) *QueueData
   func (c *Consumer) ReadWhere(predicate func(*QueueData) bool) *QueueData
+  func (c *Consumer) ReadWhereWithContext(ctx context.Context, predicate func(*QueueData) bool) (*QueueData, error)
   ```
-- **Files**: `queue/consumer.go`
+- **Features**:
+  - Non-blocking filtering with `TryReadWhere`
+  - Blocking filtering with `ReadWhere`
+  - Context-aware filtering with cancellation/timeout support
+  - Comprehensive test suite (13 tests)
+- **Note**: Filtering advances consumer position, consuming non-matching items
+- **Files**: `queue/consumer.go`, `tests/filtering_test.go`, documentation updated
 
 ### Add Persistence Option
 - **Status**: ⚠️ Not Started
@@ -227,13 +235,12 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 - **Files**: `queue/persistence.go` (new)
 
 ### Add Project Maintenance Files
-- **Status**: ⚠️ Not Started
-- **Files to Add**:
-  - `CHANGELOG.md` - Following Keep a Changelog format
-  - `CONTRIBUTING.md` - Development guidelines
-  - `CODE_OF_CONDUCT.md` - Community guidelines
-  - `LICENSE` - Currently mentioned but missing
-- **Task**: Add semantic versioning tags
+- **Status**: ✅ Completed (2025-12-27)
+- **Files Added**:
+  - `LICENSE` - MIT License
+  - `CHANGELOG.md` - Following Keep a Changelog format with full version history
+  - `CONTRIBUTING.md` - Comprehensive development guidelines including workflow, testing, and PR process
+- **Note**: Semantic versioning established in CHANGELOG.md (v1.0.0 as production-ready release)
 
 ## Completed Items
 
