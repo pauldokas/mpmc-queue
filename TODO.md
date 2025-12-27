@@ -252,6 +252,227 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
   - `CONTRIBUTING.md` - Comprehensive development guidelines including workflow, testing, and PR process
 - **Note**: Semantic versioning established in CHANGELOG.md (v1.0.0 as production-ready release)
 
+---
+
+## Priority 4 - Quality & Testing Improvements
+
+### Improve Test Coverage
+- **Status**: ⚠️ Not Started
+- **Current**: 25.2% test coverage
+- **Target**: 70-80% coverage
+- **Uncovered Areas**:
+  - ChunkedList methods: `GetFirstElement()`, `GetLastElement()`, `GetChunk()`, `GetElement()`, `CountItemsFrom()`
+  - Consumer methods: `GetNotificationChannel()`, `GetPosition()`, `SetPosition()`
+  - Context-aware blocking methods: `ReadWithContext()`, `ReadBatchWithContext()`
+  - Stats methods: `HasMoreData()`, `GetUnreadCount()`, various statistics methods
+  - Edge cases in expiration and memory management
+- **Impact**: Better confidence in code correctness, easier refactoring, production readiness
+- **Files**: `tests/coverage_improvement_test.go`
+
+### Add Integration Tests for Real-World Scenarios
+- **Status**: ⚠️ Not Started
+- **Task**: Add tests simulating real-world usage patterns
+- **Scenarios**:
+  - Message queue simulation (job queue, event streaming)
+  - Long-running producer/consumer patterns (hours-long tests)
+  - Graceful shutdown scenarios with in-flight messages
+  - Recovery after simulated failures
+  - High-load sustained throughput tests
+- **Impact**: Validates production readiness and catches real-world issues
+- **Files**: `tests/integration_scenarios_test.go`
+
+---
+
+## Priority 5 - Developer Experience
+
+### Add Examples for Common Use Cases
+- **Status**: ⚠️ Not Started
+- **Current**: Basic and advanced examples exist
+- **Missing Patterns**:
+  - Worker pool pattern (fixed number of workers processing jobs)
+  - Request-response pattern (with correlation IDs)
+  - Fan-out/fan-in pattern (distribute work, aggregate results)
+  - Rate limiting pattern (throttled processing)
+  - Dead letter queue pattern (failed message handling)
+  - Retry with exponential backoff pattern
+- **Impact**: Faster adoption, fewer support questions, better API understanding
+- **Files**: `examples/patterns/` directory
+
+### Add Observability/Metrics Export
+- **Status**: ⚠️ Not Started
+- **Task**: Add production-ready monitoring and metrics
+- **Features**:
+  - Prometheus metrics exporter (queue depth, throughput, latency)
+  - OpenTelemetry integration for distributed tracing
+  - Structured logging support (optional, non-invasive)
+  - Health check endpoint example
+  - Metrics for enqueue/dequeue rates, consumer lag, memory usage
+- **Impact**: Essential for production monitoring and debugging
+- **Files**: `queue/metrics.go`, `queue/observability.go`, `examples/observability/`
+
+### Create Getting Started Tutorial
+- **Status**: ⚠️ Not Started
+- **Task**: Comprehensive tutorial from zero to production
+- **Contents**:
+  - Installation and basic setup
+  - First queue example with explanation
+  - Step-by-step guide to production deployment
+  - Common pitfalls and how to avoid them
+  - Performance tuning guide
+  - Migration guide from other queue implementations
+- **Impact**: Lowers barrier to entry, improves developer experience
+- **Files**: `docs/GETTING_STARTED.md`, `docs/MIGRATION.md`
+
+---
+
+## Priority 6 - Performance & Optimization
+
+### Optimize Memory Estimation for Common Types
+- **Status**: ⚠️ Not Started
+- **Current**: Uses reflection for all types (slower)
+- **Optimization**:
+  - Pre-compute sizes for common primitives (int, string, bool, etc.)
+  - Add fast path for known struct types
+  - Cache type sizes more aggressively
+  - Consider `unsafe.Sizeof` for known types
+- **Impact**: 10-30% faster enqueue operations
+- **Files**: `queue/memory.go`
+
+### Add Benchmarking CI/CD Integration
+- **Status**: ⚠️ Not Started
+- **Task**: Automated performance regression detection
+- **Features**:
+  - Run benchmarks on every PR
+  - Compare performance against baseline
+  - Track performance trends over time
+  - Alert on significant regressions (>10% slower)
+  - Generate performance comparison reports
+- **Impact**: Prevents performance regressions, tracks improvements
+- **Files**: `.github/workflows/benchmark.yml`, `scripts/compare-benchmarks.sh`
+
+### Add Memory Pooling for QueueData
+- **Status**: ⚠️ Not Started
+- **Task**: Use `sync.Pool` to reduce allocations
+- **Optimization**:
+  - Pool QueueData objects for reuse
+  - Pool common payload types if possible
+  - Reduce GC pressure in high-throughput scenarios
+- **Impact**: 20-40% better performance under high load, reduced GC pauses
+- **Complexity**: Medium - need to ensure proper reset/cleanup
+- **Files**: `queue/data.go`, `queue/pool.go`
+
+---
+
+## Priority 7 - Advanced Features
+
+### Add Queue Pause/Resume
+- **Status**: ⚠️ Not Started
+- **Task**: Ability to temporarily pause/resume queue operations
+- **Use Cases**:
+  - Backpressure management
+  - Maintenance windows
+  - Rate limiting at queue level
+  - Circuit breaker pattern
+- **New API**:
+  ```go
+  func (q *Queue) Pause()
+  func (q *Queue) Resume()
+  func (q *Queue) IsPaused() bool
+  ```
+- **Impact**: Better operational control, backpressure handling
+- **Files**: `queue/queue.go`
+
+### Add Consumer Groups
+- **Status**: ⚠️ Not Started
+- **Task**: Load-balanced consumers (each item read by one consumer in group)
+- **Difference**: Current model has each consumer read all items independently
+- **Use Cases**:
+  - Load balancing across workers
+  - Parallel processing with work distribution
+  - Scaling consumers horizontally
+- **New API**:
+  ```go
+  func (q *Queue) AddConsumerGroup(groupName string) *ConsumerGroup
+  func (cg *ConsumerGroup) AddConsumer() *Consumer
+  ```
+- **Impact**: New usage pattern for load distribution
+- **Complexity**: High - requires different queue semantics
+- **Files**: `queue/consumer_group.go`
+
+### Add Message Acknowledgment Pattern
+- **Status**: ⚠️ Not Started
+- **Task**: Reliable message processing with ack/nack
+- **Features**:
+  - Consumers must acknowledge message processing
+  - Nack (negative ack) for failed processing
+  - Redelivery on failure (configurable retries)
+  - Timeout for automatic nack
+- **New API**:
+  ```go
+  func (c *Consumer) ReadWithAck() (*QueueData, func() error, func() error)
+  // Returns: data, ackFunc, nackFunc
+  ```
+- **Impact**: Enables at-least-once delivery semantics
+- **Complexity**: High - significant architectural change
+- **Files**: `queue/ack.go`
+
+### Add Dead Letter Queue Support
+- **Status**: ⚠️ Not Started
+- **Task**: Failed messages go to separate queue for inspection
+- **Features**:
+  - Items that fail processing after N attempts → DLQ
+  - Configurable max retry count
+  - DLQ monitoring and management
+  - Replay from DLQ after fixing issues
+- **Use Cases**:
+  - Error handling and debugging
+  - Monitoring problematic messages
+  - Manual intervention workflows
+- **Impact**: Better error handling and observability
+- **Files**: `queue/dlq.go`
+
+---
+
+## Priority 8 - Documentation & Ecosystem
+
+### Add Architecture Decision Records (ADRs)
+- **Status**: ⚠️ Not Started
+- **Task**: Document why certain design choices were made
+- **Topics**:
+  - Why chunked list vs other data structures
+  - Lock hierarchy design decisions
+  - Immutable QueueData rationale
+  - Memory estimation approach
+  - RCU for consumer management
+- **Impact**: Helps future contributors understand context
+- **Files**: `docs/adr/` directory
+
+### Add Comparison with Other Queue Implementations
+- **Status**: ⚠️ Not Started
+- **Task**: Benchmark and feature comparison
+- **Comparisons**:
+  - vs Go channels (when to use each)
+  - vs popular message queue libraries (RabbitMQ, Kafka, NATS)
+  - Performance comparisons (throughput, latency, memory)
+  - Feature matrix (TTL, persistence, ordering, etc.)
+  - Trade-offs and use case recommendations
+- **Impact**: Helps users choose right tool for their needs
+- **Files**: `docs/COMPARISON.md`
+
+### Add CLI Tool
+- **Status**: ⚠️ Not Started
+- **Task**: Command-line tool for queue management
+- **Features**:
+  - Inspect queue stats (`qctl stats <queue-name>`)
+  - Monitor consumers (`qctl consumers <queue-name>`)
+  - Enqueue/dequeue items for testing
+  - Clear/purge queue
+  - Export metrics
+- **Use Cases**: Debugging, monitoring, testing
+- **Files**: `cmd/qctl/`
+
+---
+
 ## Completed Items
 
 ### ✅ Fix Race Condition in AddEvent (commit: 144bf05)
