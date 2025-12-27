@@ -428,6 +428,20 @@ if memErr, ok := err.(*queue.MemoryLimitError); ok {
 }
 ```
 
+### Queue Closed Error
+```go
+err := q.Enqueue("data")
+if qcErr, ok := err.(*queue.QueueClosedError); ok {
+    fmt.Printf("Cannot %s: queue is closed\\n", qcErr.Operation)
+}
+
+// Or use errors.As for better error chain support
+var qcErr *queue.QueueClosedError
+if errors.As(err, &qcErr) {
+    fmt.Printf("Queue closed during: %s\\n", qcErr.Operation)
+}
+```
+
 ### General Queue Errors
 ```go
 _, err := q.EnqueueBatch(data)
@@ -435,6 +449,13 @@ if qErr, ok := err.(*queue.QueueError); ok {
     fmt.Printf("Queue error: %s\\n", qErr.Message)
 }
 ```
+
+**Available Error Types:**
+- `MemoryLimitError` - Memory limit exceeded
+- `QueueClosedError` - Operation attempted on closed queue
+- `ConsumerNotFoundError` - Consumer lookup failed (reserved for future use)
+- `InvalidPositionError` - Invalid consumer position (reserved for future use)
+- `QueueError` - General queue error
 
 ## Best Practices
 

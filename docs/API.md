@@ -1051,6 +1051,85 @@ type QueueError struct {
 
 ---
 
+### QueueClosedError
+
+Returned when an operation is attempted on a closed queue.
+
+**Fields:**
+```go
+type QueueClosedError struct {
+    Operation string // The operation that was attempted
+}
+```
+
+**Example:**
+```go
+err := q.Enqueue("data")
+if qcErr, ok := err.(*queue.QueueClosedError); ok {
+    fmt.Printf("Cannot %s: queue is closed\n", qcErr.Operation)
+}
+
+// Or use errors.As for error chain support
+var qcErr *queue.QueueClosedError
+if errors.As(err, &qcErr) {
+    fmt.Printf("Queue closed during: %s\n", qcErr.Operation)
+}
+```
+
+**When Returned:**
+- When blocking `Enqueue()` is interrupted by queue closure
+- When blocking `EnqueueBatch()` is interrupted by queue closure
+- When blocking `EnqueueBatchWithContext()` is interrupted by queue closure
+
+---
+
+### ConsumerNotFoundError
+
+Returned when a consumer with the given ID cannot be found.
+
+**Fields:**
+```go
+type ConsumerNotFoundError struct {
+    ID string // The consumer ID that was not found
+}
+```
+
+**Example:**
+```go
+var cnfErr *queue.ConsumerNotFoundError
+if errors.As(err, &cnfErr) {
+    fmt.Printf("Consumer not found: %s\n", cnfErr.ID)
+}
+```
+
+**Note:** Currently reserved for future use. Consumer lookup methods return nil instead of errors.
+
+---
+
+### InvalidPositionError
+
+Returned when a consumer position is invalid.
+
+**Fields:**
+```go
+type InvalidPositionError struct {
+    Position int64  // The invalid position
+    Reason   string // Why the position is invalid
+}
+```
+
+**Example:**
+```go
+var ipErr *queue.InvalidPositionError
+if errors.As(err, &ipErr) {
+    fmt.Printf("Invalid position %d: %s\n", ipErr.Position, ipErr.Reason)
+}
+```
+
+**Note:** Currently reserved for future use. Position validation may use this in future versions.
+
+---
+
 ## Constants
 
 ### DefaultTTL
