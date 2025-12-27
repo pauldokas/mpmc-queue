@@ -13,19 +13,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `TryReadWhere(predicate)` - Non-blocking filtered read
   - `ReadWhere(predicate)` - Blocking filtered read
   - `ReadWhereWithContext(ctx, predicate)` - Filtered read with context support
-- Comprehensive filtering tests (13 tests covering all filtering scenarios)
+- Comprehensive filtering tests (13 tests)
 - Specific error types for better error handling:
   - `QueueClosedError` - Returned when operations fail due to queue closure
   - `ConsumerNotFoundError` - For consumer lookup failures
   - `InvalidPositionError` - For position validation errors
 - `EnqueueWithContext()` method for single-item context-aware enqueue
 - Error wrapping with `%w` for improved error chains
-- Comprehensive error type tests (8 tests)
+- Error type tests (8 tests)
+- **Coverage improvement tests** (21 tests):
+  - ChunkedList methods coverage (10 tests)
+  - Consumer methods coverage (11 tests)
+- **Integration scenario tests** (7 tests):
+  - Job queue simulation
+  - Event streaming with multiple subscribers
+  - Graceful shutdown scenarios
+  - Rate limiting pattern
+  - Backpressure handling
+  - Multi-stage processing pipeline
+  - Context cancellation propagation
+- **Observability and metrics** (`queue/metrics.go`):
+  - Metrics tracking system with counters and latency stats
+  - Prometheus metrics exporter
+  - MetricsSnapshot for point-in-time statistics
+  - Example showing metrics usage
+- **Common pattern examples**:
+  - Worker pool pattern example
+  - Request-response pattern example
+- **Getting Started tutorial** (`docs/GETTING_STARTED.md`):
+  - Step-by-step tutorial from installation to production
+  - Understanding MPMC behavior
+  - Production patterns and best practices
+  - Common pitfalls and solutions
+  - Production deployment checklist
 
 ### Changed
 - Moved error types (`MemoryLimitError`, `QueueError`) to centralized `queue/errors.go`
 - Replaced generic error messages with specific error types where appropriate
 - Enhanced error context with wrapped errors
+- Improved AGENTS.md with additional development guidelines
+
+### Testing
+- Total tests increased from 114 to **163 tests** (49 new tests)
+- All tests pass with race detection enabled
+- Added integration tests for production scenarios
+- Comprehensive coverage for previously untested methods
 
 ## [1.0.0] - 2025-12-27
 
