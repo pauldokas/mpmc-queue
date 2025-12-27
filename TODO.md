@@ -159,28 +159,18 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 ## Priority 3 - Low Priority / Future Enhancements
 
 ### Add Godoc Examples
-- **Status**: ⚠️ Not Started
+- **Status**: ✅ Completed (2025-12-27)
 - **Task**: Add runnable examples to godoc
-- **Files**: `queue/example_test.go` (new)
+- **Files**: `queue/example_test.go`
 
 ### Add Architecture Diagrams
-- **Status**: ⚠️ Not Started
-- **Task**: Create visual diagrams showing:
-  - Memory layout of chunked list
-  - Consumer position tracking
-  - Expiration workflow
-  - Lock hierarchy
-- **Files**: `docs/architecture/` (new directory)
+- **Status**: ✅ Completed (2025-12-27)
+- **Task**: Create visual diagrams
+- **Files**: `docs/architecture/*.md` (Memory Layout, Consumer Tracking, Expiration, Lock Hierarchy)
 
 ### Document Limitations More Clearly
-- **Status**: ⚠️ Not Started
+- **Status**: ✅ Completed (2025-12-27)
 - **Task**: Add limitations section to README.md
-- **Content**:
-  - Maximum 1MB total memory (not configurable in v1.0)
-  - Memory estimation is approximate (±10-20% typical)
-  - TTL granularity: 30 seconds (expiration check interval)
-  - QueueData is not safe to modify after enqueue
-  - Events slice grows unbounded with many consumers
 - **Files**: `README.md`
 
 ### Add More Specific Error Types
