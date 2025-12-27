@@ -174,20 +174,30 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 - **Files**: `README.md`
 
 ### Add More Specific Error Types
-- **Status**: ⚠️ Not Started
+- **Status**: ✅ Completed (2025-12-27)
 - **Task**: Create specific error types for better error handling
 - **New Types**:
   ```go
-  type QueueClosedError struct{}
+  type QueueClosedError struct{ Operation string }
   type ConsumerNotFoundError struct{ ID string }
-  type InvalidPositionError struct{ Position int64 }
+  type InvalidPositionError struct{ Position int64; Reason string }
   ```
-- **Files**: `queue/errors.go` (new)
+- **Features**:
+  - QueueClosedError returned when operations fail due to queue closure
+  - ConsumerNotFoundError for consumer lookup failures (ready for future use)
+  - InvalidPositionError for position validation (ready for future use)
+  - Centralized error handling in `queue/errors.go`
+  - Comprehensive test suite (8 tests)
+- **Files**: `queue/errors.go`, `tests/error_types_test.go`
 
 ### Add Error Wrapping
-- **Status**: ⚠️ Not Started
-- **Task**: Use `fmt.Errorf` with `%w` for error wrapping
-- **Files**: All queue package files
+- **Status**: ✅ Completed (2025-12-27)
+- **Task**: Use `fmt.Errorf` with `%w` for error wrapping throughout queue package
+- **Implementation**:
+  - Added error wrapping in EnqueueWithContext
+  - Specific error types replace generic fmt.Errorf calls
+  - Improved error context for debugging
+- **Files**: `queue/queue.go`, `queue/errors.go`
 
 ### Add Priority Queue Support
 - **Status**: ⚠️ Not Started

@@ -14,6 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `ReadWhere(predicate)` - Blocking filtered read
   - `ReadWhereWithContext(ctx, predicate)` - Filtered read with context support
 - Comprehensive filtering tests (13 tests covering all filtering scenarios)
+- Specific error types for better error handling:
+  - `QueueClosedError` - Returned when operations fail due to queue closure
+  - `ConsumerNotFoundError` - For consumer lookup failures
+  - `InvalidPositionError` - For position validation errors
+- `EnqueueWithContext()` method for single-item context-aware enqueue
+- Error wrapping with `%w` for improved error chains
+- Comprehensive error type tests (8 tests)
+
+### Changed
+- Moved error types (`MemoryLimitError`, `QueueError`) to centralized `queue/errors.go`
+- Replaced generic error messages with specific error types where appropriate
+- Enhanced error context with wrapped errors
 
 ## [1.0.0] - 2025-12-27
 
