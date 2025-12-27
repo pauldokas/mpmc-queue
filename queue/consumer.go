@@ -25,7 +25,7 @@ type Consumer struct {
 	mutex          sync.Mutex
 	queue          *Queue          // Reference to parent queue
 	lastReadTime   time.Time       // For tracking consumer activity
-	totalItemsRead int64           // Total items this consumer has read
+	totalItemsRead atomic.Int64    // Total items this consumer has read
 	dequeueHistory []DequeueRecord // Track dequeue events locally
 	closed         atomic.Bool     // Tracks if consumer is closed
 }
@@ -39,7 +39,6 @@ func NewConsumer(queue *Queue) *Consumer {
 		notificationCh: make(chan int, 100), // Buffered channel for notifications
 		queue:          queue,
 		lastReadTime:   time.Now(),
-		totalItemsRead: 0,
 		dequeueHistory: make([]DequeueRecord, 0, 100), // Pre-allocate some capacity
 	}
 }
@@ -134,7 +133,7 @@ func (c *Consumer) TryRead() *QueueData {
 					})
 					c.indexInChunk++
 					c.lastReadTime = time.Now()
-					c.totalItemsRead++
+					c.totalItemsRead.Add(1)
 					c.mutex.Unlock()
 					return data
 				}
@@ -369,7 +368,7 @@ func (c *Consumer) GetStats() ConsumerStats {
 	// Read consumer state without holding lock to avoid lock ordering issues
 	c.mutex.Lock()
 	id := c.id
-	totalItemsRead := c.totalItemsRead
+	totalItemsRead := c.totalItemsRead.Load()
 	lastReadTime := c.lastReadTime
 	chunkElement := c.chunkElement
 	indexInChunk := c.indexInChunk
@@ -489,17 +488,20 @@ type ConsumerStats struct {
 
 // ConsumerManager manages multiple consumers for a queue
 type ConsumerManager struct {
-	consumers map[string]*Consumer
-	mutex     sync.RWMutex
-	queue     *Queue
+	consumers       map[string]*Consumer
+	activeConsumers atomic.Value // Stores []*Consumer
+	mutex           sync.RWMutex
+	queue           *Queue
 }
 
 // NewConsumerManager creates a new consumer manager
 func NewConsumerManager(queue *Queue) *ConsumerManager {
-	return &ConsumerManager{
+	cm := &ConsumerManager{
 		consumers: make(map[string]*Consumer),
 		queue:     queue,
 	}
+	cm.activeConsumers.Store(make([]*Consumer, 0))
+	return cm
 }
 
 // AddConsumer adds a new consumer to the queue
@@ -520,6 +522,7 @@ func (cm *ConsumerManager) AddConsumer() *Consumer {
 	}
 
 	cm.consumers[consumer.GetID()] = consumer
+	cm.updateActiveConsumers()
 
 	return consumer
 }
@@ -536,8 +539,19 @@ func (cm *ConsumerManager) RemoveConsumer(consumerID string) bool {
 
 	consumer.Close()
 	delete(cm.consumers, consumerID)
+	cm.updateActiveConsumers()
 
 	return true
+}
+
+// updateActiveConsumers updates the atomic snapshot of consumers
+// Must be called with lock held
+func (cm *ConsumerManager) updateActiveConsumers() {
+	consumers := make([]*Consumer, 0, len(cm.consumers))
+	for _, consumer := range cm.consumers {
+		consumers = append(consumers, consumer)
+	}
+	cm.activeConsumers.Store(consumers)
 }
 
 // GetConsumer returns a consumer by ID
@@ -550,15 +564,8 @@ func (cm *ConsumerManager) GetConsumer(consumerID string) *Consumer {
 
 // GetAllConsumers returns all active consumers
 func (cm *ConsumerManager) GetAllConsumers() []*Consumer {
-	cm.mutex.RLock()
-	defer cm.mutex.RUnlock()
-
-	consumers := make([]*Consumer, 0, len(cm.consumers))
-	for _, consumer := range cm.consumers {
-		consumers = append(consumers, consumer)
-	}
-
-	return consumers
+	// Lock-free read via atomic value
+	return cm.activeConsumers.Load().([]*Consumer)
 }
 
 // NotifyAllConsumersOfExpiration notifies all consumers about expired items

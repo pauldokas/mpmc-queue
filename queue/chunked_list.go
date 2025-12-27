@@ -3,6 +3,7 @@ package queue
 import (
 	"container/list"
 	"fmt"
+	"sync/atomic"
 	"time"
 )
 
@@ -10,7 +11,7 @@ import (
 type ChunkedList struct {
 	list          *list.List
 	memoryTracker *MemoryTracker
-	totalItems    int64
+	totalItems    atomic.Int64
 }
 
 // NewChunkedList creates a new chunked list
@@ -18,7 +19,6 @@ func NewChunkedList(memoryTracker *MemoryTracker) *ChunkedList {
 	return &ChunkedList{
 		list:          list.New(),
 		memoryTracker: memoryTracker,
-		totalItems:    0,
 	}
 }
 
@@ -56,7 +56,7 @@ func (cl *ChunkedList) Enqueue(data *QueueData) error {
 	// Add data to the chunk
 	if lastChunk.Add(data) {
 		cl.memoryTracker.AddData(data)
-		cl.totalItems++
+		cl.totalItems.Add(1)
 		return nil
 	}
 
@@ -65,7 +65,7 @@ func (cl *ChunkedList) Enqueue(data *QueueData) error {
 
 // GetTotalItems returns the total number of items in all chunks
 func (cl *ChunkedList) GetTotalItems() int64 {
-	return cl.totalItems
+	return cl.totalItems.Load()
 }
 
 // GetFirstElement returns the first element in the list
@@ -108,7 +108,7 @@ func (cl *ChunkedList) RemoveExpiredData(ttl time.Duration) (int, []ChunkRemoval
 			// Update memory tracking properly
 			for _, data := range removedItems {
 				cl.memoryTracker.RemoveData(data)
-				cl.totalItems--
+				cl.totalItems.Add(-1)
 			}
 			totalRemoved += removedFromChunk
 
@@ -144,7 +144,7 @@ func (cl *ChunkedList) RemoveExpiredData(ttl time.Duration) (int, []ChunkRemoval
 
 // IsEmpty returns true if the list has no items
 func (cl *ChunkedList) IsEmpty() bool {
-	return cl.totalItems == 0
+	return cl.totalItems.Load() == 0
 }
 
 // Clear removes all items from the list
@@ -154,7 +154,7 @@ func (cl *ChunkedList) Clear() {
 		cl.list.Remove(element)
 		cl.memoryTracker.RemoveChunk()
 	}
-	cl.totalItems = 0
+	cl.totalItems.Store(0)
 }
 
 // GetMemoryUsage returns current memory usage

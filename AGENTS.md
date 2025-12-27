@@ -11,17 +11,17 @@
 
 ## Development Commands
 ```bash
-# Testing (ALWAYS use -race)
-go test ./tests -v -race                    # Run all tests
-go test ./tests -v -race -run TestName      # Run single test
-go test ./tests -v -race -run "Test.*Batch" # Run matching tests
-go test ./tests -bench=. -benchmem          # Run benchmarks
+# Common Tasks (via Makefile)
+make build          # Build with race detection
+make test           # Run unit tests (fast)
+make test-integration # Run stress/long-running tests
+make test-all       # Run ALL tests
+make lint           # Run linter
+make fmt            # Format code
+make clean          # Clean artifacts
 
-# Build & Verify
-go build -race ./...                        # Build with race detector
-go fmt ./...                                # Format code
-go vet ./...                                # Static analysis
-go mod tidy                                 # Clean dependencies
+# Manual Testing (if needed)
+go test ./tests -v -race -run TestName
 ```
 
 ## Code Style & Conventions

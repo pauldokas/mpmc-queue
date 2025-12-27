@@ -1,0 +1,24 @@
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - gosimple
+    - ineffassign
+    - unused
+    - typecheck
+    - gofmt
+    - goimports
+
+linters-settings:
+  govet:
+    check-shadowing: true
+  gofmt:
+    simplify: true
+  goimports:
+    local-prefixes: mpmc-queue

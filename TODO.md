@@ -121,87 +121,40 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 - **Files**: `queue/queue.go`
 
 ### Reduce Lock Contention
-- **Status**: ⚠️ Not Started
-- **Tasks**:
-  - Consider lock-free alternatives for consumer position tracking
-  - Use atomic operations for statistics counters
-  - Implement read-copy-update (RCU) for consumer list
-- **Files**: `queue/consumer.go`, `queue/queue.go`
+- **Status**: ✅ Completed (2025-12-27)
+- **Completed Improvements**:
+  - Implemented RCU (Read-Copy-Update) for `ConsumerManager` using `atomic.Value`
+  - Converted `ChunkedList.totalItems` to `atomic.Int64` (lock-free `IsEmpty`)
+  - Converted `Consumer.totalItemsRead` to `atomic.Int64`
+- **Impact**: 
+  - `GetAllConsumers` (used by expiration worker) is now O(1) and lock-free
+  - Queue stats and empty checks are lock-free
+  - Reduced lock hold times in critical paths
+- **Files**: `queue/consumer.go`, `queue/chunked_list.go`, `queue/queue.go`
 
 ### Add CI/CD Pipeline
-- **Status**: ⚠️ Not Started
+- **Status**: ✅ Completed (2025-12-27)
 - **Task**: Create GitHub Actions workflow
-- **Files**: `.github/workflows/test.yml` (new)
-- **Workflow**:
-  ```yaml
-  name: Test
-  on: [push, pull_request]
-  jobs:
-    test:
-      runs-on: ubuntu-latest
-      steps:
-        - uses: actions/checkout@v3
-        - uses: actions/setup-go@v4
-          with:
-            go-version: '1.25'
-        - run: go test -v -race -coverprofile=coverage.out ./...
-        - run: go vet ./...
-  ```
+- **Files**: `.github/workflows/test.yml`
+- **Workflow**: Runs linter, unit tests, and integration tests on push/PR
 
 ### Add Makefile
-- **Status**: ⚠️ Not Started
-- **File**: `Makefile` (new)
-- **Targets**: test, bench, lint, coverage, build
+- **Status**: ✅ Completed (2025-12-27)
+- **File**: `Makefile`
+- **Targets**: `build`, `test`, `test-integration`, `lint`, `fmt`, `clean`, `coverage`
 
 ### Add golangci-lint Configuration
-- **Status**: ⚠️ Not Started
-- **File**: `.golangci.yml` (new)
-- **Linters**: govet, errcheck, staticcheck, gosimple, ineffassign, unused, typecheck
-
-### Add Peek Operations
-- **Status**: ⚠️ Not Started
-- **Task**: Add non-destructive read operations
-- **New Functions**:
-  ```go
-  func (c *Consumer) Peek() *QueueData
-  func (c *Consumer) PeekBatch(limit int) []*QueueData
-  ```
-- **Files**: `queue/consumer.go`
-
-### Add Consumer Seek/Reset
-- **Status**: ⚠️ Not Started
-- **Task**: Allow consumers to reset to beginning or seek to position
-- **New Functions**:
-  ```go
-  func (c *Consumer) Reset() error
-  func (c *Consumer) Seek(position int64) error
-  func (c *Consumer) GetPosition() int64
-  ```
-- **Files**: `queue/consumer.go`
-
-### Add Metrics/Observability
-- **Status**: ⚠️ Not Started
-- **Task**: Add prometheus-style metrics
-- **New API**:
-  ```go
-  func (q *Queue) GetMetrics() QueueMetrics
-  
-  type QueueMetrics struct {
-      EnqueueCount       int64
-      DequeueCount       int64
-      MemoryLimitHits    int64
-      ExpirationRuns     int64
-      ItemsExpired       int64
-      AveragePayloadSize int64
-  }
-  ```
-- **Files**: `queue/queue.go`, `queue/metrics.go` (new)
+- **Status**: ✅ Completed (2025-12-27)
+- **File**: `.golangci.yml`
+- **Linters**: govet, errcheck, staticcheck, gosimple, ineffassign, unused, typecheck, gofmt, goimports
 
 ### Separate Unit and Integration Tests
-- **Status**: ⚠️ Not Started
+- **Status**: ✅ Completed (2025-12-27)
 - **Task**: Add build tags to separate test types
-- **Tags**: `//go:build unit` and `//go:build integration`
-- **Files**: All test files in `tests/`
+- **Tags**: `//go:build integration` added to stress tests
+- **Files**: `tests/benchmark_test.go`, `tests/extreme_stress_test.go`
+- **Usage**: `make test` (unit only) vs `make test-integration`
+
 
 ## Priority 3 - Low Priority / Future Enhancements
 

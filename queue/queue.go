@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const (
+var (
 	// DefaultTTL is the default time-to-live for queue items (10 minutes)
 	DefaultTTL = 10 * time.Minute
 
@@ -472,9 +472,7 @@ func (q *Queue) GetConsumerStats() []ConsumerStats {
 
 // IsEmpty returns true if the queue has no items
 func (q *Queue) IsEmpty() bool {
-	q.mutex.RLock()
-	defer q.mutex.RUnlock()
-
+	// No lock needed as totalItems is atomic and pointer is constant
 	return q.data.IsEmpty()
 }
 
