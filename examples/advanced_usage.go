@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"mpmc-queue/queue"
@@ -59,6 +60,7 @@ func main() {
 	const itemsPerProducer = 10
 
 	var wg sync.WaitGroup
+	var producersDone atomic.Bool
 
 	// Start producers
 	fmt.Printf("   Starting %d producers...\n", numProducers)
@@ -78,25 +80,32 @@ func main() {
 		}(i)
 	}
 
+	// Signal when producers are done
+	go func() {
+		wg.Wait()
+		producersDone.Store(true)
+	}()
+
 	// Start consumers
+	var consumerWg sync.WaitGroup
 	fmt.Printf("   Starting %d consumers...\n", numConsumers)
 	consumedCount := make([]int, numConsumers)
 
 	for i := 0; i < numConsumers; i++ {
-		wg.Add(1)
+		consumerWg.Add(1)
 		go func(consumerID int) {
-			defer wg.Done()
+			defer consumerWg.Done()
 			consumer := q2.AddConsumer()
 			fmt.Printf("   Consumer %d ID: %s\n", consumerID, consumer.GetID())
 
 			for {
 				data := consumer.TryRead()
 				if data == nil {
-					time.Sleep(50 * time.Millisecond)
-					// Check if we should stop (no more producers)
-					if q2.GetQueueStats().TotalItems == 0 {
+					// Check if we should stop (producers done AND queue empty)
+					if producersDone.Load() && q2.GetQueueStats().TotalItems == 0 {
 						break
 					}
+					time.Sleep(10 * time.Millisecond)
 					continue
 				}
 				consumedCount[consumerID]++
@@ -105,9 +114,8 @@ func main() {
 		}(i)
 	}
 
-	// Wait for producers to finish
-	time.Sleep(500 * time.Millisecond)
-	wg.Wait()
+	// Wait for consumers to finish
+	consumerWg.Wait()
 
 	// Final statistics
 	fmt.Printf("   Final queue stats: %d items remaining\n", q2.GetQueueStats().TotalItems)

@@ -60,7 +60,7 @@ func main() {
 	// Both consumers read independently
 	fmt.Println("   Consumer 1 reads:")
 	for {
-		data := consumer1.Read()
+		data := consumer1.TryRead()
 		if data == nil {
 			break
 		}
@@ -69,7 +69,7 @@ func main() {
 
 	fmt.Println("   Consumer 2 reads:")
 	for {
-		data := consumer2.Read()
+		data := consumer2.TryRead()
 		if data == nil {
 			break
 		}
@@ -113,7 +113,8 @@ func main() {
 	fmt.Println("\n6. Event History:")
 	q.TryEnqueue("Tracked Item")
 	trackedConsumer := q.AddConsumer()
-	data := trackedConsumer.Read()
+	// Use TryRead to avoid blocking if the item was somehow already consumed or expired (unlikely here but good practice in examples)
+	data := trackedConsumer.TryRead()
 	if data != nil {
 		fmt.Printf("   Item ID: %s\n", data.ID)
 		fmt.Printf("   Enqueue Event:\n")

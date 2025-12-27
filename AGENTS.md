@@ -1,35 +1,54 @@
 # Agent Development Guide for mpmc-queue
 
-**Stack**: Go 1.25.1 | **Module**: `mpmc-queue` | **Deps**: `github.com/google/uuid`
+**Stack**: Go 1.25+ | **Module**: `mpmc-queue` | **Deps**: `github.com/google/uuid`
 
-## Critical Mandates
-1. **Concurrency Safety**: ALWAYS acquire `Queue.mutex` BEFORE `Consumer.mutex`. NEVER hold `Consumer.mutex` while acquiring `Queue.mutex`.
-2. **Testing**: ALWAYS run tests with `-race`. Use `Try*` methods (non-blocking) in tests to prevent hangs.
-3. **Immutability**: `QueueData` is immutable. NEVER modify it after creation.
-4. **Locking**: Use `RLock` for reads, `Lock` for writes.
-5. **Memory**: Pre-validate data size with `MemoryTracker.CanAddData()` before adding.
+## 🚨 Critical Mandates
+1.  **Concurrency Safety**: ALWAYS acquire `Queue.mutex` BEFORE `Consumer.mutex`. NEVER hold `Consumer.mutex` while acquiring `Queue.mutex`.
+2.  **Race Detection**: ALWAYS run tests with `-race`. This is non-negotiable for this codebase.
+3.  **Immutability**: `QueueData` is immutable. NEVER modify it after creation.
+4.  **Locking**: Use `RLock` for reads, `Lock` for writes. Defer `Unlock` immediately after locking.
+5.  **Memory**: Pre-validate data size with `MemoryTracker.CanAddData()` before adding to the queue.
 
-## Development Commands
+## 📂 Project Structure
+-   `queue/`: Core logic (`Queue`, `Consumer`, `ChunkedList`, `MemoryTracker`).
+-   `tests/`: Comprehensive test suite (unit, race, integration, stress).
+-   `examples/`: Usage examples for end-users.
+-   `docs/`: Architecture and design documentation.
+
+## 🛠 Development Workflow
+
+### Build & Test Commands
+Use `make` for standard operations.
+
 ```bash
-# Common Tasks (via Makefile)
-make build          # Build with race detection
-make test           # Run unit tests (fast)
-make test-integration # Run stress/long-running tests
-make test-all       # Run ALL tests
-make lint           # Run linter
-make fmt            # Format code
-make clean          # Clean artifacts
+# Build
+make build          # Builds with -race flag
 
-# Manual Testing (if needed)
-go test ./tests -v -race -run TestName
+# Testing
+make test           # Run unit tests (fast, skips integration)
+make test-integration # Run stress/long-running tests (-tags=integration)
+make test-all       # Run EVERYTHING (unit + integration + race)
+
+# Single Test Execution (Best for debugging)
+# Format: go test -v -race -run <TestName> <Path>
+go test -v -race -run TestQueue_Enqueue ./tests/queue_test.go
 ```
 
-## Code Style & Conventions
+### Linting & Formatting
+We use `golangci-lint` with strict settings.
+```bash
+make lint           # Run all linters
+make fmt            # Format code (go fmt)
+```
+**Style Note**: `goimports` is enforced with local prefix `mpmc-queue`.
+
+## 📏 Code Style & Conventions
 
 ### Imports
-Group in order: StdLib, External, Internal.
+Group imports: StdLib, External, Internal.
 ```go
 import (
+    "context"
     "sync"
     "time"
 
@@ -39,73 +58,87 @@ import (
 )
 ```
 
-### Naming & Documentation
-- **Exported**: `PascalCase` (e.g., `Queue`, `Enqueue`). MUST have Godoc comment.
-- **Private**: `camelCase` (e.g., `expirationWorker`).
-- **Constants**: `PascalCase` (e.g., `DefaultTTL`).
-- **Tags**: Use JSON tags `json:"field_name"`.
+### Naming
+-   **Exported**: `PascalCase` (e.g., `Queue`, `Enqueue`). Must have Godoc comments explaining *behavior* and *blocking semantics*.
+-   **Private**: `camelCase` (e.g., `expirationWorker`, `cleanupExpiredItems`).
+-   **Interfaces**: Name with `-er` suffix if simple (e.g., `Reader`), or descriptive (e.g., `MemoryTracker`).
 
 ### Error Handling
-- Use custom error types (e.g., `MemoryLimitError`).
-- Always wrap errors: `fmt.Errorf("context: %w", err)`.
-- Check errors with `errors.As` or type assertion.
+-   **Custom Errors**: Use specific types like `MemoryLimitError` for logic branching.
+-   **Wrapping**: Always wrap errors with context: `fmt.Errorf("initializing consumer: %w", err)`.
+-   **Checking**: Use `errors.As` to check for specific error types.
 
-## Concurrency Patterns
+## 🔄 Concurrency Patterns
 
 ### Lock Ordering (Deadlock Prevention)
-**Rule**: Queue lock > Consumer lock.
-**Snapshot Pattern**: Read consumer state, release lock, THEN access queue.
+**Golden Rule**: `Queue.mutex` > `Consumer.mutex`.
+
+**Snapshot Pattern**: To avoid holding locks too long or incorrectly:
+1.  Lock Consumer.
+2.  Copy necessary state (e.g., current index).
+3.  Unlock Consumer.
+4.  Lock Queue.
+5.  Perform operation.
 
 ```go
-// ✅ CORRECT: Snapshot pattern
+// ✅ Correct Pattern
 c.mutex.Lock()
 pos := c.chunkElement
 c.mutex.Unlock()
-// Now safe to acquire queue lock
+
 c.queue.mutex.RLock()
 defer c.queue.mutex.RUnlock()
-// ... use pos
-
-// ❌ WRONG: Holding consumer lock while acquiring queue lock
-c.mutex.Lock()
-defer c.mutex.Unlock()
-c.queue.mutex.RLock() // DEADLOCK RISK
+// ... safely access queue using pos ...
 ```
 
 ### Blocking vs Non-Blocking
-- **Blocking** (`Enqueue`, `Read`): Wait for resource. Use in production logic.
-- **Non-Blocking** (`TryEnqueue`, `TryRead`): Return immediately. **MANDATORY for tests** to avoid timeouts.
+-   **Blocking** (`Enqueue`, `Read`): Use `select` with `stopChan` and `context.Done()`. Used in production.
+-   **Non-Blocking** (`TryEnqueue`, `TryRead`): Return immediately with success/fail/nil. **MANDATORY for tests** to prevent test timeouts.
 
-## Architecture
-- **Queue**: Central coordinator (RWMutex). Manages `ChunkedList` and `ConsumerManager`.
-- **ChunkedList**: Linked list of fixed-size arrays (1000 items/chunk).
-- **Consumer**: Independent reader with its own cursor and mutex.
-- **MemoryTracker**: Enforces global 1MB memory limit.
-- **Expiration**: Background worker cleans up expired items every 30s.
+## 🧪 Testing Standards
 
-## Testing Standards
-1. **Setup**: Create queue, `defer q.Close()`.
-2. **Race Detection**: `go test -race` is non-negotiable.
-3. **Parallelism**: Use `sync.WaitGroup` for concurrent consumers.
-4. **Atomics**: Use `atomic.AddInt64`/`LoadInt64` for shared counters in tests.
+1.  **Isolation**: Create a new `Queue` for every test.
+2.  **Cleanup**: Always `defer q.Close()`.
+3.  **Parallelism**: Use `t.Parallel()` where appropriate, but be careful with shared resources (though `Queue` instances should be isolated).
+4.  **WaitGroups**: Use `sync.WaitGroup` for testing concurrent producers/consumers.
+5.  **Atomics**: Use `atomic.Int64` for counters shared across goroutines in tests.
 
-### Example Test
+### Example Test Template
 ```go
-func TestFeature(t *testing.T) {
-    q := queue.NewQueue("test")
+func TestConcurrency_Safe(t *testing.T) {
+    q := queue.NewQueue("test-queue")
     defer q.Close()
 
-    // Use TryEnqueue for tests
-    if err := q.TryEnqueue("data"); err != nil {
-        t.Fatalf("Failed: %v", err)
-    }
-    
-    // Use TryRead for tests
-    c := q.AddConsumer()
-    if data := c.TryRead(); data == nil {
-        t.Fatal("Expected data")
-    }
+    var wg sync.WaitGroup
+    wg.Add(2)
+
+    // Producer
+    go func() {
+        defer wg.Done()
+        if err := q.TryEnqueue("data"); err != nil {
+            t.Errorf("Enqueue failed: %v", err)
+        }
+    }()
+
+    // Consumer
+    go func() {
+        defer wg.Done()
+        c := q.AddConsumer()
+        // Spin/Wait for data (simplified)
+        for i := 0; i < 10; i++ {
+            if val := c.TryRead(); val != nil {
+                return
+            }
+            time.Sleep(time.Millisecond)
+        }
+        t.Error("Did not receive data")
+    }()
+
+    wg.Wait()
 }
 ```
-EOF
 
+## ⚠️ Common Pitfalls
+-   **Nil Checks**: `chunkElement` can be nil if the queue is empty or consumer is new. Always check before dereferencing.
+-   **Context Propagation**: Always respect `ctx.Done()` in blocking operations.
+-   **Channel Blocking**: Never send to `notify` channels without a `select` with `default:` case, or you risk deadlocking the system if channels are full.
