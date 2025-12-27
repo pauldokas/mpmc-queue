@@ -46,15 +46,16 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 - **Files**: `go.mod`
 
 ### Add Context Support
-- **Status**: ⚠️ Not Started
+- **Status**: ✅ Completed (2025-12-27)
 - **Task**: Add context-aware operations throughout API
 - **New Functions**:
   ```go
   func (q *Queue) EnqueueWithContext(ctx context.Context, payload any) error
+  func (q *Queue) EnqueueBatchWithContext(ctx context.Context, payloads []any) error
   func (c *Consumer) ReadWithContext(ctx context.Context) (*QueueData, error)
   func (c *Consumer) ReadBatchWithContext(ctx context.Context, limit int) ([]*QueueData, error)
   ```
-- **Files**: `queue/queue.go`, `queue/consumer.go`
+- **Files**: `queue/queue.go`, `queue/consumer.go`, `tests/context_test.go`
 
 ### Add Test Coverage Reporting
 - **Status**: ✅ Completed
@@ -70,7 +71,8 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 
 ### Add Missing Test Cases
 - **Status**: ✅ Completed (2025-12-27)
-- **Completed Tests** (72 new tests added):
+- **Completed Tests** (83 new tests added):
+  - ✅ Context support: Cancellation, timeouts, concurrent usage (11 tests)
   - ✅ Consumer management: RemoveConsumer, GetConsumer, GetAllConsumers (9 tests)
   - ✅ Lifecycle: Close, CloseWithContext, operations on closed queue (12 tests)
   - ✅ Batch operations: Atomicity, edge cases, cross-chunk (14 tests)
@@ -83,7 +85,7 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 ## Priority 2 - Medium Priority
 
 ### Make Memory Limit Configurable
-- **Status**: ⚠️ Not Started
+- **Status**: ✅ Completed (2025-12-27)
 - **Current**: Memory limit hardcoded to 1MB
 - **Task**: Make configurable via QueueConfig
 - **New API**:
@@ -92,31 +94,30 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
   
   type QueueConfig struct {
       TTL         time.Duration
-      MaxMemory   int64  // Currently hardcoded to 1MB
-      ChunkSize   int    // Currently hardcoded to 1000
+      MaxMemory   int64  // Configurable (default 1MB)
   }
   ```
-- **Files**: `queue/queue.go`, `queue/memory.go`
+- **Files**: `queue/queue.go`, `queue/memory.go`, `tests/config_test.go`
 
 ### Optimize Memory Estimation with Caching
-- **Status**: ⚠️ Not Started
+- **Status**: ✅ Completed (2025-12-27)
 - **Current**: Uses reflection recursively for every item (expensive)
-- **Improvement**: Cache size estimates for common payload types
+- **Improvement**: Cache size estimates for fixed-size types (primitives, structs of primitives)
 - **Implementation**:
   ```go
   type MemoryTracker struct {
       totalMemory  int64
       maxMemory    int64
       sizeCache    map[reflect.Type]int64  // Cache type sizes
-      mu           sync.RWMutex
+      cacheMutex   sync.RWMutex
   }
   ```
 - **Files**: `queue/memory.go`
 
 ### Optimize Batch Memory Validation
-- **Status**: ⚠️ Not Started
+- **Status**: ✅ Completed (2025-12-27)
 - **Current**: `EnqueueBatch` validates each item sequentially
-- **Improvement**: Calculate total size once before validation
+- **Improvement**: Calculate total size once before validation (including chunk overhead)
 - **Files**: `queue/queue.go`
 
 ### Reduce Lock Contention

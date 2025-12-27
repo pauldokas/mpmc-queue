@@ -14,7 +14,7 @@ func main() {
 
 	// Example 1: TTL and Expiration
 	fmt.Println("\n1. TTL and Expiration Example:")
-	
+
 	// Create queue with 2-second TTL
 	q := queue.NewQueueWithTTL("expiration-queue", 2*time.Second)
 	defer q.Close()
@@ -27,17 +27,17 @@ func main() {
 
 	// Create consumer but don't read immediately
 	consumer := q.AddConsumer()
-	
+
 	fmt.Printf("   Queue has %d items\n", q.GetQueueStats().TotalItems)
 	fmt.Println("   Waiting for items to expire...")
-	
+
 	// Wait for items to expire
 	time.Sleep(3 * time.Second)
-	
+
 	// Force expiration check
 	expired := q.ForceExpiration()
 	fmt.Printf("   Expired %d items\n", expired)
-	
+
 	// Check for expiration notification
 	select {
 	case expiredCount := <-consumer.GetNotificationChannel():
@@ -81,14 +81,14 @@ func main() {
 	// Start consumers
 	fmt.Printf("   Starting %d consumers...\n", numConsumers)
 	consumedCount := make([]int, numConsumers)
-	
+
 	for i := 0; i < numConsumers; i++ {
 		wg.Add(1)
 		go func(consumerID int) {
 			defer wg.Done()
 			consumer := q2.AddConsumer()
 			fmt.Printf("   Consumer %d ID: %s\n", consumerID, consumer.GetID())
-			
+
 			for {
 				data := consumer.TryRead()
 				if data == nil {
@@ -128,7 +128,7 @@ func main() {
 	}
 
 	fmt.Printf("   Payload size: %d bytes\n", len(largePayload))
-	
+
 	// Enqueue until memory limit is reached
 	count := 0
 	for {
@@ -139,7 +139,7 @@ func main() {
 			break
 		}
 		count++
-		
+
 		if count%5 == 0 {
 			stats := q3.GetQueueStats()
 			fmt.Printf("   Enqueued %d items, memory usage: %d bytes (%.1f%%)\n",
@@ -157,14 +157,14 @@ func main() {
 	for i := 1; i <= 3; i++ {
 		q4.Enqueue(fmt.Sprintf("Long TTL Item %d", i))
 	}
-	
+
 	fmt.Printf("   Added items with TTL: %v\n", q4.GetTTL())
 	fmt.Printf("   Queue has %d items\n", q4.GetQueueStats().TotalItems)
-	
+
 	// Change TTL to very short
 	q4.SetTTL(100 * time.Millisecond)
 	fmt.Printf("   Changed TTL to: %v\n", q4.GetTTL())
-	
+
 	// Wait and check expiration
 	time.Sleep(200 * time.Millisecond)
 	expired = q4.ForceExpiration()
@@ -206,7 +206,7 @@ func main() {
 	fmt.Println("   Consumer statistics:")
 	stats := q5.GetConsumerStats()
 	for _, cs := range stats {
-		fmt.Printf("   Consumer %s: read %d, unread %d\n", 
+		fmt.Printf("   Consumer %s: read %d, unread %d\n",
 			cs.ID, cs.TotalItemsRead, cs.UnreadItems)
 	}
 

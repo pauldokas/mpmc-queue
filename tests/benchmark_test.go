@@ -193,7 +193,7 @@ func BenchmarkMemoryEstimation(b *testing.B) {
 }
 
 func BenchmarkChunkedListOperations(b *testing.B) {
-	memTracker := queue.NewMemoryTracker()
+	memTracker := queue.NewMemoryTracker(queue.MaxQueueMemory)
 	chunkedList := queue.NewChunkedList(memTracker)
 
 	b.ResetTimer()

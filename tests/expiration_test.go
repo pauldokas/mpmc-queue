@@ -291,7 +291,7 @@ func TestLongRunningExpiration(t *testing.T) {
 
 	// Final stats
 	stats := q.GetQueueStats()
-	
+
 	t.Logf("Added %d items, read %d items, %d items remaining",
 		addedCount, readCount, stats.TotalItems)
 

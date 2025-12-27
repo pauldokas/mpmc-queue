@@ -2,6 +2,7 @@ package queue
 
 import (
 	"reflect"
+	"sync"
 	"unsafe"
 )
 
@@ -23,14 +24,25 @@ const (
 type MemoryTracker struct {
 	totalMemory int64
 	maxMemory   int64
+	sizeCache   map[reflect.Type]int64
+	cacheMutex  sync.RWMutex
 }
 
 // NewMemoryTracker creates a new memory tracker
-func NewMemoryTracker() *MemoryTracker {
+func NewMemoryTracker(maxMemory int64) *MemoryTracker {
+	if maxMemory <= 0 {
+		maxMemory = MaxQueueMemory
+	}
 	return &MemoryTracker{
 		totalMemory: 0,
-		maxMemory:   MaxQueueMemory,
+		maxMemory:   maxMemory,
+		sizeCache:   make(map[reflect.Type]int64),
 	}
+}
+
+// GetMaxMemory returns the maximum allowed memory
+func (mt *MemoryTracker) GetMaxMemory() int64 {
+	return mt.maxMemory
 }
 
 // EstimateQueueDataSize estimates the memory size of a QueueData item
@@ -63,58 +75,107 @@ func (mt *MemoryTracker) estimatePayloadSize(payload any) int64 {
 	}
 
 	v := reflect.ValueOf(payload)
-	return mt.estimateValueSize(v)
+	size, _ := mt.estimateValueSize(v)
+	return size
 }
 
 // estimateValueSize recursively estimates the size of a reflect.Value
-func (mt *MemoryTracker) estimateValueSize(v reflect.Value) int64 {
+// Returns size and whether the type has a fixed size
+func (mt *MemoryTracker) estimateValueSize(v reflect.Value) (int64, bool) {
 	if !v.IsValid() {
-		return 0
+		return 0, true
 	}
+
+	t := v.Type()
+
+	// Check cache
+	mt.cacheMutex.RLock()
+	cached, ok := mt.sizeCache[t]
+	mt.cacheMutex.RUnlock()
+
+	if ok {
+		if cached >= 0 {
+			return cached, true
+		}
+		// If cached is -1, it's variable size, so we must recalculate
+		// We fall through to the switch but know it's not fixed
+	}
+
+	var size int64
+	var isFixed bool = true
 
 	switch v.Kind() {
 	case reflect.Bool:
-		return 1
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return int64(v.Type().Size())
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		return int64(v.Type().Size())
-	case reflect.Float32, reflect.Float64:
-		return int64(v.Type().Size())
-	case reflect.Complex64, reflect.Complex128:
-		return int64(v.Type().Size())
+		size = 1
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64,
+		reflect.Complex64, reflect.Complex128:
+		size = int64(t.Size())
 	case reflect.String:
-		return int64(len(v.String()))
-	case reflect.Array, reflect.Slice:
-		size := int64(0)
+		size = int64(len(v.String()))
+		isFixed = false
+	case reflect.Array:
+		size = 0
+		// Arrays have fixed length, but elements might be variable (e.g. [10]string)
 		for i := 0; i < v.Len(); i++ {
-			size += mt.estimateValueSize(v.Index(i))
-		}
-		return size
-	case reflect.Map:
-		size := int64(0)
-		for _, key := range v.MapKeys() {
-			size += mt.estimateValueSize(key)
-			size += mt.estimateValueSize(v.MapIndex(key))
-		}
-		return size
-	case reflect.Struct:
-		size := int64(0)
-		for i := 0; i < v.NumField(); i++ {
-			if v.Field(i).CanInterface() {
-				size += mt.estimateValueSize(v.Field(i))
+			elemSize, elemFixed := mt.estimateValueSize(v.Index(i))
+			size += elemSize
+			if !elemFixed {
+				isFixed = false
 			}
 		}
-		return size
-	case reflect.Ptr, reflect.Interface:
-		if v.IsNil() {
-			return int64(unsafe.Sizeof(uintptr(0)))
+	case reflect.Slice:
+		isFixed = false
+		size = 0
+		for i := 0; i < v.Len(); i++ {
+			elemSize, _ := mt.estimateValueSize(v.Index(i))
+			size += elemSize
 		}
-		return int64(unsafe.Sizeof(uintptr(0))) + mt.estimateValueSize(v.Elem())
+	case reflect.Map:
+		isFixed = false
+		size = 0
+		for _, key := range v.MapKeys() {
+			kSize, _ := mt.estimateValueSize(key)
+			vSize, _ := mt.estimateValueSize(v.MapIndex(key))
+			size += kSize + vSize
+		}
+	case reflect.Struct:
+		size = 0
+		for i := 0; i < v.NumField(); i++ {
+			if v.Field(i).CanInterface() {
+				fSize, fFixed := mt.estimateValueSize(v.Field(i))
+				size += fSize
+				if !fFixed {
+					isFixed = false
+				}
+			}
+		}
+	case reflect.Ptr, reflect.Interface:
+		isFixed = false
+		if v.IsNil() {
+			size = int64(unsafe.Sizeof(uintptr(0)))
+		} else {
+			elemSize, _ := mt.estimateValueSize(v.Elem())
+			size = int64(unsafe.Sizeof(uintptr(0))) + elemSize
+		}
 	default:
 		// For unknown types, use the type's size
-		return int64(v.Type().Size())
+		size = int64(t.Size())
 	}
+
+	// Update cache if needed
+	if !ok {
+		mt.cacheMutex.Lock()
+		if isFixed {
+			mt.sizeCache[t] = size
+		} else {
+			mt.sizeCache[t] = -1 // Mark as variable
+		}
+		mt.cacheMutex.Unlock()
+	}
+
+	return size, isFixed
 }
 
 // CanAddData checks if adding the data would exceed memory limit

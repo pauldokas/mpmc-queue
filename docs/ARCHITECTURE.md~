@@ -395,7 +395,7 @@ Memory usage = Chunk overhead + Sum(QueueData sizes)
 
 **QueueData Size:**
 ```go
-BaseSize +
+BaseSize + 
 len(ID) +                    // UUID string
 EstimatePayload(Payload) +   // Recursive reflection
 len(QueueName) +             // Event field
@@ -563,7 +563,7 @@ The queue lock must be held during `chunk.Get()` to prevent expiration from modi
 // WRONG - Deadlock risk
 c.mutex.Lock()
   q.mutex.Lock()  // ❌ Never do this
-
+  
 // CORRECT
 q.mutex.RLock()
   c.mutex.Lock()  // ✅ OK: inner lock while holding outer
@@ -700,7 +700,7 @@ q.mutex.RUnlock()
 ### Space Complexity
 
 ```
-Total Memory =
+Total Memory = 
     Queue overhead +
     n * ChunkNode overhead +
     m * QueueData size +

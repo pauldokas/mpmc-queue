@@ -2,6 +2,7 @@ package queue
 
 import (
 	"container/list"
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -188,6 +189,36 @@ func (c *Consumer) Read() *QueueData {
 	}
 }
 
+// ReadWithContext reads the next available data item for this consumer, blocking if no data is available
+// Blocks until data becomes available, the queue is closed, or the context is cancelled
+func (c *Consumer) ReadWithContext(ctx context.Context) (*QueueData, error) {
+	for {
+		// Check context first
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		data := c.TryRead()
+		if data != nil {
+			return data, nil
+		}
+
+		// No data available, wait for notification
+		select {
+		case <-c.queue.enqueueNotify:
+			// New data might be available, retry
+			continue
+		case <-c.queue.stopChan:
+			// Queue is closing, return nil
+			return nil, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
 // TryReadBatch attempts to read multiple items up to the specified limit without blocking
 // Returns immediately with whatever items are available (may be less than limit)
 func (c *Consumer) TryReadBatch(limit int) []*QueueData {
@@ -234,6 +265,48 @@ func (c *Consumer) ReadBatch(limit int) []*QueueData {
 	}
 
 	return batch
+}
+
+// ReadBatchWithContext reads multiple items up to the specified limit, blocking until at least one item is available
+// Blocks until data becomes available, the queue is closed, or the context is cancelled
+func (c *Consumer) ReadBatchWithContext(ctx context.Context, limit int) ([]*QueueData, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	batch := make([]*QueueData, 0, limit)
+
+	// Block until at least one item is available or context cancelled
+	firstItem, err := c.ReadWithContext(ctx)
+	if err != nil {
+		return batch, err
+	}
+	if firstItem == nil {
+		return batch, nil // Queue closed
+	}
+	batch = append(batch, firstItem)
+
+	// Try to read more items without blocking
+	for len(batch) < limit {
+		// Check context between reads just in case
+		select {
+		case <-ctx.Done():
+			// Even if context is done, we already have some data, so we can return it
+			// However, convention usually suggests returning error if context is cancelled.
+			// But here we've successfully read at least one item.
+			// Let's return what we have so far and the error.
+			return batch, ctx.Err()
+		default:
+		}
+
+		data := c.TryRead()
+		if data == nil {
+			break // No more data immediately available
+		}
+		batch = append(batch, data)
+	}
+
+	return batch, nil
 }
 
 // HasMoreData checks if there's more data available for this consumer

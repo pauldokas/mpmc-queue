@@ -144,6 +144,11 @@ batch := consumer.ReadBatch(10)
 
 // Non-blocking batch read
 batch := consumer.TryReadBatch(10) // Returns immediately with available items
+
+// Context-aware batch read (cancels if context is done)
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+batch, err := consumer.ReadBatchWithContext(ctx, 10)
 ```
 
 ### Expiration Notifications
@@ -194,6 +199,8 @@ for _, cs := range consumerStats {
 #### Data Operations (Blocking)
 - `Enqueue(payload any) error` - Add single item (blocks if queue full)
 - `EnqueueBatch(payloads []any) error` - Add multiple items atomically (blocks if queue full)
+- `EnqueueWithContext(ctx context.Context, payload any) error` - Add single item with context support
+- `EnqueueBatchWithContext(ctx context.Context, payloads []any) error` - Add multiple items with context support
 
 #### Data Operations (Non-Blocking)
 - `TryEnqueue(payload any) error` - Add single item (returns error immediately if full)
@@ -225,6 +232,8 @@ for _, cs := range consumerStats {
 #### Reading (Blocking)
 - `Read() *QueueData` - Read next item (blocks if no data available)
 - `ReadBatch(limit int) []*QueueData` - Read multiple items (blocks until at least 1 available)
+- `ReadWithContext(ctx context.Context) (*QueueData, error)` - Read next item with context support
+- `ReadBatchWithContext(ctx context.Context, limit int) ([]*QueueData, error)` - Read multiple items with context support
 
 #### Reading (Non-Blocking)
 - `TryRead() *QueueData` - Read next item (returns nil immediately if no data)

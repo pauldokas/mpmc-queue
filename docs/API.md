@@ -121,6 +121,45 @@ if err != nil {
 
 ---
 
+### Enqueue Operations (Context-Aware)
+
+#### `EnqueueWithContext(ctx context.Context, payload any) error`
+
+Adds a single item to the queue, blocking until space is available or context is cancelled.
+
+**Parameters:**
+- `ctx` (context.Context): Context for cancellation/timeout
+- `payload` (any): Data to enqueue
+
+**Returns:**
+- `error`: nil on success, context error or queue closed error
+
+**Example:**
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+
+err := q.EnqueueWithContext(ctx, "data")
+if err != nil {
+    // Handle timeout or cancellation
+}
+```
+
+---
+
+#### `EnqueueBatchWithContext(ctx context.Context, payloads []any) error`
+
+Adds multiple items atomically, blocking until space is available or context is cancelled.
+
+**Parameters:**
+- `ctx` (context.Context): Context for cancellation/timeout
+- `payloads` ([]any): Slice of items to enqueue
+
+**Returns:**
+- `error`: nil on success, context error or queue closed error
+
+---
+
 ### Enqueue Operations (Non-Blocking)
 
 #### `TryEnqueue(payload any) error`
@@ -492,6 +531,46 @@ for _, data := range batch {
     fmt.Printf("Processing: %v\n", data.Payload)
 }
 ```
+
+---
+
+### Reading Data (Context-Aware)
+
+#### `ReadWithContext(ctx context.Context) (*QueueData, error)`
+
+Reads the next item for this consumer, blocking until data is available or context is cancelled.
+
+**Parameters:**
+- `ctx` (context.Context): Context for cancellation/timeout
+
+**Returns:**
+- `*QueueData`: Next data item (nil if queue closed or context cancelled)
+- `error`: nil on success, context error on timeout/cancellation
+
+**Example:**
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+defer cancel()
+
+data, err := consumer.ReadWithContext(ctx)
+if err != nil {
+    // Handle timeout
+}
+```
+
+---
+
+#### `ReadBatchWithContext(ctx context.Context, limit int) ([]*QueueData, error)`
+
+Reads multiple items, blocking until at least one item is available or context is cancelled.
+
+**Parameters:**
+- `ctx` (context.Context): Context for cancellation/timeout
+- `limit` (int): Maximum items to read
+
+**Returns:**
+- `[]*QueueData`: Slice of items
+- `error`: nil on success (even if partial batch), context error on timeout/cancellation
 
 ---
 

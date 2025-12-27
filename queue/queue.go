@@ -15,6 +15,9 @@ const (
 
 	// ExpirationCheckInterval is how often to check for expired items
 	ExpirationCheckInterval = 30 * time.Second
+
+	// ChunkSize is the number of items per chunk
+	ChunkSize = 1000
 )
 
 // Queue represents a multi-producer, multi-consumer queue
@@ -34,20 +37,37 @@ type Queue struct {
 	closed            atomic.Bool   // Tracks if queue is closed
 }
 
+// QueueConfig holds configuration for the queue
+type QueueConfig struct {
+	TTL       time.Duration
+	MaxMemory int64
+}
+
 // NewQueue creates a new queue with the specified name and default TTL
 func NewQueue(name string) *Queue {
-	return NewQueueWithTTL(name, DefaultTTL)
+	return NewQueueWithConfig(name, QueueConfig{
+		TTL:       DefaultTTL,
+		MaxMemory: MaxQueueMemory,
+	})
 }
 
 // NewQueueWithTTL creates a new queue with a custom TTL
 func NewQueueWithTTL(name string, ttl time.Duration) *Queue {
-	memoryTracker := NewMemoryTracker()
+	return NewQueueWithConfig(name, QueueConfig{
+		TTL:       ttl,
+		MaxMemory: MaxQueueMemory,
+	})
+}
+
+// NewQueueWithConfig creates a new queue with the specified configuration
+func NewQueueWithConfig(name string, config QueueConfig) *Queue {
+	memoryTracker := NewMemoryTracker(config.MaxMemory)
 
 	queue := &Queue{
 		name:              name,
 		data:              NewChunkedList(memoryTracker),
 		memoryTracker:     memoryTracker,
-		ttl:               ttl,
+		ttl:               config.TTL,
 		stopChan:          make(chan struct{}),
 		expirationEnabled: true,
 		createdAt:         time.Now(),
@@ -130,6 +150,54 @@ func (q *Queue) Enqueue(payload any) error {
 	}
 }
 
+// EnqueueWithContext adds data to the queue, blocking if the queue is full
+// Blocks until space becomes available, the queue is closed, or the context is cancelled
+func (q *Queue) EnqueueWithContext(ctx context.Context, payload any) error {
+	data := NewQueueData(payload, q.name)
+
+	for {
+		// Check context before trying to acquire lock
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		q.mutex.Lock()
+		err := q.data.Enqueue(data)
+		if err == nil {
+			q.mutex.Unlock()
+			// Notify waiting consumers (send multiple to wake multiple waiters)
+			for i := 0; i < 10; i++ {
+				select {
+				case q.enqueueNotify <- struct{}{}:
+				default:
+					break
+				}
+			}
+			return nil
+		}
+
+		// Check if it's a memory limit error
+		if _, ok := err.(*MemoryLimitError); !ok {
+			q.mutex.Unlock()
+			return err // Return non-memory errors immediately
+		}
+		q.mutex.Unlock()
+
+		// Wait for space to become available
+		select {
+		case <-q.dequeueNotify:
+			// Space might be available, retry
+			continue
+		case <-q.stopChan:
+			return fmt.Errorf("queue closed while waiting to enqueue")
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
 // TryEnqueueBatch attempts to add multiple items to the queue without blocking
 // Returns an error if any item would exceed the memory limit
 // This is an atomic operation - either all items are added or none are
@@ -141,18 +209,44 @@ func (q *Queue) TryEnqueueBatch(payloads []any) error {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 
-	// Pre-validate that all items can be added
+	// Create all data items upfront and calculate total size
 	dataItems := make([]*QueueData, len(payloads))
-	for i, payload := range payloads {
-		data := NewQueueData(payload, q.name)
-		dataItems[i] = data
+	var totalBatchSize int64
 
-		if !q.memoryTracker.CanAddData(data) {
-			return &MemoryLimitError{
-				Current: q.memoryTracker.GetMemoryUsage(),
-				Max:     MaxQueueMemory,
-				Needed:  q.memoryTracker.EstimateQueueDataSize(data),
-			}
+	for i, payload := range payloads {
+		dataItems[i] = NewQueueData(payload, q.name)
+		totalBatchSize += q.memoryTracker.EstimateQueueDataSize(dataItems[i])
+	}
+
+	// Calculate chunk overhead
+	var chunkOverhead int64
+	itemsToAdd := len(payloads)
+	lastElement := q.data.GetLastElement()
+
+	if lastElement == nil {
+		// Empty list, need at least 1 chunk
+		chunkOverhead += ChunkNodeSize
+		remaining := itemsToAdd - ChunkSize
+		if remaining > 0 {
+			numExtra := (remaining + ChunkSize - 1) / ChunkSize
+			chunkOverhead += int64(numExtra) * ChunkNodeSize
+		}
+	} else {
+		chunk := q.data.GetChunk(lastElement)
+		available := ChunkSize - chunk.GetSize()
+
+		if itemsToAdd > available {
+			remaining := itemsToAdd - available
+			numExtra := (remaining + ChunkSize - 1) / ChunkSize
+			chunkOverhead += int64(numExtra) * ChunkNodeSize
+		}
+	}
+
+	if q.memoryTracker.GetMemoryUsage()+totalBatchSize+chunkOverhead > q.memoryTracker.GetMaxMemory() {
+		return &MemoryLimitError{
+			Current: q.memoryTracker.GetMemoryUsage(),
+			Max:     q.memoryTracker.GetMaxMemory(),
+			Needed:  totalBatchSize + chunkOverhead,
 		}
 	}
 
@@ -179,25 +273,43 @@ func (q *Queue) EnqueueBatch(payloads []any) error {
 		return nil
 	}
 
-	// Create all data items upfront
+	// Create all data items upfront and calculate total size
 	dataItems := make([]*QueueData, len(payloads))
+	var totalBatchSize int64
+
 	for i, payload := range payloads {
 		dataItems[i] = NewQueueData(payload, q.name)
+		totalBatchSize += q.memoryTracker.EstimateQueueDataSize(dataItems[i])
 	}
 
 	for {
 		q.mutex.Lock()
 
-		// Check if all items can be added
-		canAddAll := true
-		for _, data := range dataItems {
-			if !q.memoryTracker.CanAddData(data) {
-				canAddAll = false
-				break
+		// Calculate chunk overhead
+		var chunkOverhead int64
+		itemsToAdd := len(payloads)
+		lastElement := q.data.GetLastElement()
+
+		if lastElement == nil {
+			// Empty list, need at least 1 chunk
+			chunkOverhead += ChunkNodeSize
+			remaining := itemsToAdd - ChunkSize
+			if remaining > 0 {
+				numExtra := (remaining + ChunkSize - 1) / ChunkSize
+				chunkOverhead += int64(numExtra) * ChunkNodeSize
+			}
+		} else {
+			chunk := q.data.GetChunk(lastElement)
+			available := ChunkSize - chunk.GetSize()
+
+			if itemsToAdd > available {
+				remaining := itemsToAdd - available
+				numExtra := (remaining + ChunkSize - 1) / ChunkSize
+				chunkOverhead += int64(numExtra) * ChunkNodeSize
 			}
 		}
 
-		if canAddAll {
+		if q.memoryTracker.GetMemoryUsage()+totalBatchSize+chunkOverhead <= q.memoryTracker.GetMaxMemory() {
 			// Add all items
 			for _, data := range dataItems {
 				if err := q.data.Enqueue(data); err != nil {
@@ -227,6 +339,92 @@ func (q *Queue) EnqueueBatch(payloads []any) error {
 			continue
 		case <-q.stopChan:
 			return fmt.Errorf("queue closed while waiting to enqueue batch")
+		}
+	}
+}
+
+// EnqueueBatchWithContext adds multiple items to the queue, blocking if the queue is full
+// Blocks until space becomes available, the queue is closed, or the context is cancelled
+func (q *Queue) EnqueueBatchWithContext(ctx context.Context, payloads []any) error {
+	if len(payloads) == 0 {
+		return nil
+	}
+
+	// Create all data items upfront and calculate total size
+	dataItems := make([]*QueueData, len(payloads))
+	var totalBatchSize int64
+
+	for i, payload := range payloads {
+		dataItems[i] = NewQueueData(payload, q.name)
+		totalBatchSize += q.memoryTracker.EstimateQueueDataSize(dataItems[i])
+	}
+
+	for {
+		// Check context before trying to acquire lock
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		q.mutex.Lock()
+
+		// Calculate chunk overhead
+		var chunkOverhead int64
+		itemsToAdd := len(payloads)
+		lastElement := q.data.GetLastElement()
+
+		if lastElement == nil {
+			// Empty list, need at least 1 chunk
+			chunkOverhead += ChunkNodeSize
+			remaining := itemsToAdd - ChunkSize
+			if remaining > 0 {
+				numExtra := (remaining + ChunkSize - 1) / ChunkSize
+				chunkOverhead += int64(numExtra) * ChunkNodeSize
+			}
+		} else {
+			chunk := q.data.GetChunk(lastElement)
+			available := ChunkSize - chunk.GetSize()
+
+			if itemsToAdd > available {
+				remaining := itemsToAdd - available
+				numExtra := (remaining + ChunkSize - 1) / ChunkSize
+				chunkOverhead += int64(numExtra) * ChunkNodeSize
+			}
+		}
+
+		if q.memoryTracker.GetMemoryUsage()+totalBatchSize+chunkOverhead <= q.memoryTracker.GetMaxMemory() {
+			// Add all items
+			for _, data := range dataItems {
+				if err := q.data.Enqueue(data); err != nil {
+					q.mutex.Unlock()
+					return err
+				}
+			}
+			q.mutex.Unlock()
+
+			// Notify waiting consumers (send multiple to wake multiple waiters)
+			for i := 0; i < 10; i++ {
+				select {
+				case q.enqueueNotify <- struct{}{}:
+				default:
+					break
+				}
+			}
+			return nil
+		}
+
+		q.mutex.Unlock()
+
+		// Wait for space to become available
+		select {
+		case <-q.dequeueNotify:
+			// Space might be available, retry
+			continue
+		case <-q.stopChan:
+			return fmt.Errorf("queue closed while waiting to enqueue batch")
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 }

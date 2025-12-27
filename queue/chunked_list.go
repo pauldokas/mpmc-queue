@@ -27,7 +27,7 @@ func (cl *ChunkedList) Enqueue(data *QueueData) error {
 	if !cl.memoryTracker.CanAddData(data) {
 		return &MemoryLimitError{
 			Current: cl.memoryTracker.GetMemoryUsage(),
-			Max:     MaxQueueMemory,
+			Max:     cl.memoryTracker.GetMaxMemory(),
 			Needed:  cl.memoryTracker.EstimateQueueDataSize(data),
 		}
 	}
