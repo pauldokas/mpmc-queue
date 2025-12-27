@@ -31,7 +31,12 @@ make test-all       # Run EVERYTHING (unit + integration + race)
 
 # Single Test Execution (Best for debugging)
 # Format: go test -v -race -run <TestName> <Path>
-go test -v -race -run TestQueue_Enqueue ./tests/queue_test.go
+go test -v -race -run TestQueue_Enqueue ./tests/
+go test -v -race -run TestNewQueue ./tests/queue_test.go
+go test -v -race -run TestConsumer_TryRead ./tests/consumer_management_test.go
+
+# Coverage
+make coverage       # Generate and display coverage report
 ```
 
 ### Linting & Formatting
@@ -41,6 +46,7 @@ make lint           # Run all linters
 make fmt            # Format code (go fmt)
 ```
 **Style Note**: `goimports` is enforced with local prefix `mpmc-queue`.
+**Linters Enabled**: govet, errcheck, staticcheck, gosimple, ineffassign, unused, typecheck, gofmt, goimports.
 
 ## 📏 Code Style & Conventions
 
@@ -62,11 +68,16 @@ import (
 -   **Exported**: `PascalCase` (e.g., `Queue`, `Enqueue`). Must have Godoc comments explaining *behavior* and *blocking semantics*.
 -   **Private**: `camelCase` (e.g., `expirationWorker`, `cleanupExpiredItems`).
 -   **Interfaces**: Name with `-er` suffix if simple (e.g., `Reader`), or descriptive (e.g., `MemoryTracker`).
+-   **Constants**: `PascalCase` for exported (e.g., `ChunkSize`, `MaxQueueMemory`), `camelCase` for private.
 
 ### Error Handling
 -   **Custom Errors**: Use specific types like `MemoryLimitError` for logic branching.
 -   **Wrapping**: Always wrap errors with context: `fmt.Errorf("initializing consumer: %w", err)`.
 -   **Checking**: Use `errors.As` to check for specific error types.
+
+### Types & Memory
+-   **Atomics**: Use `atomic.Int64`, `atomic.Bool` for lock-free counters/flags (e.g., `totalItemsRead`, `closed`).
+-   **Unsafe**: `unsafe.Sizeof()` is used for accurate memory estimation in `MemoryTracker`. Be cautious when modifying structs.
 
 ## 🔄 Concurrency Patterns
 
