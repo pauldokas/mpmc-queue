@@ -478,6 +478,93 @@ func (c *Consumer) Close() {
 	close(c.notificationCh)
 }
 
+// TryReadWhere attempts to read the next data item that matches the predicate without blocking
+// Returns nil if no matching data is available
+// The predicate function should return true for items that should be returned
+// Note: This advances the consumer position as it searches, consuming non-matching items
+func (c *Consumer) TryReadWhere(predicate func(*QueueData) bool) *QueueData {
+	if predicate == nil {
+		return nil
+	}
+
+	// Keep reading until we find a match or run out of data
+	for {
+		data := c.TryRead()
+		if data == nil {
+			// No more data available
+			return nil
+		}
+
+		// Check if data matches predicate
+		if predicate(data) {
+			return data
+		}
+
+		// Continue to next item
+	}
+}
+
+// ReadWhere reads the next data item that matches the predicate, blocking until a match is found
+// Blocks until matching data becomes available or the queue is closed
+// The predicate function should return true for items that should be returned
+func (c *Consumer) ReadWhere(predicate func(*QueueData) bool) *QueueData {
+	if predicate == nil {
+		return nil
+	}
+
+	for {
+		data := c.TryReadWhere(predicate)
+		if data != nil {
+			return data
+		}
+
+		// No matching data available, wait for notification
+		select {
+		case <-c.queue.enqueueNotify:
+			// New data might be available, retry
+			continue
+		case <-c.queue.stopChan:
+			// Queue is closing, return nil
+			return nil
+		}
+	}
+}
+
+// ReadWhereWithContext reads the next data item that matches the predicate, blocking until a match is found
+// Blocks until matching data becomes available, the queue is closed, or the context is cancelled
+// The predicate function should return true for items that should be returned
+func (c *Consumer) ReadWhereWithContext(ctx context.Context, predicate func(*QueueData) bool) (*QueueData, error) {
+	if predicate == nil {
+		return nil, nil
+	}
+
+	for {
+		// Check context first
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		data := c.TryReadWhere(predicate)
+		if data != nil {
+			return data, nil
+		}
+
+		// No matching data available, wait for notification
+		select {
+		case <-c.queue.enqueueNotify:
+			// New data might be available, retry
+			continue
+		case <-c.queue.stopChan:
+			// Queue is closing, return nil
+			return nil, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
 // ConsumerStats represents consumer statistics
 type ConsumerStats struct {
 	ID             string    `json:"id"`
