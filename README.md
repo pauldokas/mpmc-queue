@@ -178,6 +178,46 @@ default:
 }
 ```
 
+### Filtering/Selection
+
+```go
+q := queue.NewQueue("filter-queue")
+defer q.Close()
+
+// Enqueue mixed data
+for i := 1; i <= 100; i++ {
+    q.TryEnqueue(i)
+}
+
+consumer := q.AddConsumer()
+
+// Filter for even numbers only (non-blocking)
+data := consumer.TryReadWhere(func(d *queue.QueueData) bool {
+    num, ok := d.Payload.(int)
+    return ok && num%2 == 0
+})
+// Returns first even number (2), or nil if no match
+
+// Filter with blocking (waits for matching item)
+data = consumer.ReadWhere(func(d *queue.QueueData) bool {
+    num, ok := d.Payload.(int)
+    return ok && num > 50
+})
+// Blocks until an item > 50 is available
+
+// Filter with context support
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+data, err := consumer.ReadWhereWithContext(ctx, func(d *queue.QueueData) bool {
+    str, ok := d.Payload.(string)
+    return ok && len(str) > 10
+})
+// Returns matching item, or error on timeout/cancellation
+
+// Note: Filtering advances the consumer position
+// Non-matching items are consumed as the filter searches
+```
+
 ### Statistics and Monitoring
 
 ```go
@@ -246,6 +286,11 @@ for _, cs := range consumerStats {
 - `TryRead() *QueueData` - Read next item (returns nil immediately if no data)
 - `TryReadBatch(limit int) []*QueueData` - Read multiple items (returns immediately with available items)
 - `HasMoreData() bool` - Check if more data available
+
+#### Filtering
+- `TryReadWhere(predicate func(*QueueData) bool) *QueueData` - Read next item matching predicate (non-blocking)
+- `ReadWhere(predicate func(*QueueData) bool) *QueueData` - Read next item matching predicate (blocking)
+- `ReadWhereWithContext(ctx context.Context, predicate func(*QueueData) bool) (*QueueData, error)` - Read with predicate and context support
 
 #### Information
 - `GetID() string` - Get consumer UUID
@@ -406,6 +451,8 @@ if qErr, ok := err.(*queue.QueueError); ok {
 - Monitor consumer lag via statistics
 - Use `TryRead` in tests to avoid blocking
 - Use blocking `Read` in production when waiting for data is acceptable
+- Use filtering methods (`ReadWhere`, `TryReadWhere`) to selectively process items
+  - Note: Filtering advances consumer position, consuming non-matching items
 
 ### Memory Management
 - Monitor memory usage percentage

@@ -689,7 +689,125 @@ if consumer.HasMoreData() {
 }
 ```
 
-**Note:** Use `TryRead()` after checking `HasMoreData()` to avoid blocking
+---
+
+### Filtering Methods
+
+#### `TryReadWhere(predicate func(*QueueData) bool) *QueueData`
+
+Attempts to read the next data item matching the predicate without blocking.
+
+**Parameters:**
+- `predicate` (function): Function that returns true for items to return
+
+**Returns:**
+- `*QueueData`: First matching item, or nil if no match found
+
+**Behavior:**
+- Returns **immediately** (non-blocking)
+- Advances consumer position while searching
+- Non-matching items are consumed
+- Returns nil if predicate is nil
+
+**Example:**
+```go
+// Read first even number
+data := consumer.TryReadWhere(func(d *queue.QueueData) bool {
+    num, ok := d.Payload.(int)
+    return ok && num%2 == 0
+})
+
+if data != nil {
+    fmt.Printf("Found even number: %v\n", data.Payload)
+}
+```
+
+**Important Notes:**
+- Consumer position advances as it searches
+- Non-matching items are consumed (not skipped)
+- Use for selective processing of queue items
+
+---
+
+#### `ReadWhere(predicate func(*QueueData) bool) *QueueData`
+
+Reads the next data item matching the predicate, blocking until a match is found.
+
+**Parameters:**
+- `predicate` (function): Function that returns true for items to return
+
+**Returns:**
+- `*QueueData`: First matching item, or nil if queue closes
+
+**Behavior:**
+- **Blocks** until matching item is available
+- Advances consumer position while searching
+- Non-matching items are consumed
+- Returns nil if predicate is nil
+- Returns nil if queue is closed while waiting
+
+**Example:**
+```go
+// Wait for high-priority item
+data := consumer.ReadWhere(func(d *queue.QueueData) bool {
+    priority, ok := d.Payload.(string)
+    return ok && priority == "high"
+})
+
+if data != nil {
+    fmt.Printf("Processing high-priority: %v\n", data.Payload)
+}
+```
+
+**Use Cases:**
+- Selective message processing
+- Priority-based filtering
+- Type-specific consumers
+- Conditional data extraction
+
+---
+
+#### `ReadWhereWithContext(ctx context.Context, predicate func(*QueueData) bool) (*QueueData, error)`
+
+Reads the next matching item with context support for cancellation and timeout.
+
+**Parameters:**
+- `ctx` (context.Context): Context for cancellation/timeout
+- `predicate` (function): Function that returns true for items to return
+
+**Returns:**
+- `*QueueData`: First matching item
+- `error`: Context error (Canceled, DeadlineExceeded) or nil
+
+**Behavior:**
+- **Blocks** until match found or context done
+- Respects context cancellation
+- Respects context timeout
+- Returns nil data and error on context cancellation
+- Returns nil data and nil error if predicate is nil
+
+**Example:**
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+
+data, err := consumer.ReadWhereWithContext(ctx, func(d *queue.QueueData) bool {
+    return d.Payload.(int) > 100
+})
+
+if err == context.DeadlineExceeded {
+    fmt.Println("Timeout waiting for matching item")
+} else if err == context.Canceled {
+    fmt.Println("Operation cancelled")
+} else if data != nil {
+    fmt.Printf("Found: %v\n", data.Payload)
+}
+```
+
+**Error Handling:**
+- `context.Canceled`: Context was cancelled
+- `context.DeadlineExceeded`: Timeout occurred
+- `nil`: Success or queue closed
 
 ---
 
