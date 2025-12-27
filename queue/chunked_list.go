@@ -2,7 +2,6 @@ package queue
 
 import (
 	"container/list"
-	"fmt"
 	"sync/atomic"
 	"time"
 )
@@ -195,24 +194,4 @@ func (cl *ChunkedList) CountItemsFrom(element *list.Element, indexInChunk int) i
 	})
 
 	return count
-}
-
-// MemoryLimitError represents a memory limit exceeded error
-type MemoryLimitError struct {
-	Current int64
-	Max     int64
-	Needed  int64
-}
-
-func (e *MemoryLimitError) Error() string {
-	return fmt.Sprintf("memory limit exceeded: current=%d, max=%d, needed=%d", e.Current, e.Max, e.Needed)
-}
-
-// QueueError represents a general queue error
-type QueueError struct {
-	Message string
-}
-
-func (e *QueueError) Error() string {
-	return e.Message
 }
