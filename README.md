@@ -436,13 +436,21 @@ if qErr, ok := err.(*queue.QueueError); ok {
 
 ## Limitations
 
-- 1MB total memory limit (not currently configurable)
-- TTL granularity limited to check interval (30 seconds)
-- Memory estimation is approximate (±10-20% typical)
-- No persistence across restarts
-- Dequeue history grows unbounded per consumer
-- QueueData is immutable (cannot be modified after enqueue)
-- Blocking operations wait indefinitely (use Try* methods for timeouts)
+### Memory Management
+- **Hard Limit**: The queue enforces a strict 1MB memory limit (default) based on *estimated* usage.
+- **Estimation**: Memory usage is calculated using reflection and is approximate. It accounts for overhead but may deviate by ±10-20% from actual heap usage.
+- **Behavior**: When full, `Enqueue` blocks indefinitely and `TryEnqueue` returns an error immediately.
+
+### Time-To-Live (TTL)
+- **Granularity**: Expiration is checked by a background worker every 30 seconds (`ExpirationCheckInterval`).
+- **Precision**: An item may remain in the queue for up to 30 seconds *after* its TTL has expired before being removed.
+
+### Immutability
+- **QueueData**: Once created, `QueueData` and its payload are immutable. This ensures thread safety without complex locking but requires creating new items for updates.
+
+### Resource Growth
+- **Event History**: Each `Consumer` maintains a local `dequeueHistory` slice that tracks every item read. This slice grows unbounded over the lifetime of the consumer and is not automatically pruned. Long-lived consumers reading millions of items will consume significant memory.
+- **Persistence**: The queue is in-memory only. All data is lost upon process restart.
 
 See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for solutions and workarounds.
 
