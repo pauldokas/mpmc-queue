@@ -1,6 +1,4 @@
 *~
 *.out
-coverage.out
-coverage_new.out
 coverage.html
 *.test
