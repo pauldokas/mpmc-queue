@@ -145,24 +145,18 @@ func (q *Queue) Enqueue(payload any) error {
 			// Space might be available, retry
 			continue
 		case <-q.stopChan:
-			return fmt.Errorf("queue closed while waiting to enqueue")
+			// Queue is closing, return error
+			return &QueueClosedError{Operation: "enqueue"}
 		}
 	}
 }
 
-// EnqueueWithContext adds data to the queue, blocking if the queue is full
+// EnqueueWithContext adds a single item to the queue, blocking if the queue is full
 // Blocks until space becomes available, the queue is closed, or the context is cancelled
 func (q *Queue) EnqueueWithContext(ctx context.Context, payload any) error {
 	data := NewQueueData(payload, q.name)
 
 	for {
-		// Check context before trying to acquire lock
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
 		q.mutex.Lock()
 		err := q.data.Enqueue(data)
 		if err == nil {
@@ -181,7 +175,7 @@ func (q *Queue) EnqueueWithContext(ctx context.Context, payload any) error {
 		// Check if it's a memory limit error
 		if _, ok := err.(*MemoryLimitError); !ok {
 			q.mutex.Unlock()
-			return err // Return non-memory errors immediately
+			return fmt.Errorf("enqueue failed: %w", err) // Return non-memory errors with wrapping
 		}
 		q.mutex.Unlock()
 
@@ -191,7 +185,8 @@ func (q *Queue) EnqueueWithContext(ctx context.Context, payload any) error {
 			// Space might be available, retry
 			continue
 		case <-q.stopChan:
-			return fmt.Errorf("queue closed while waiting to enqueue")
+			// Queue is closing, return error
+			return &QueueClosedError{Operation: "enqueue"}
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -338,7 +333,7 @@ func (q *Queue) EnqueueBatch(payloads []any) error {
 			// Space might be available, retry
 			continue
 		case <-q.stopChan:
-			return fmt.Errorf("queue closed while waiting to enqueue batch")
+			return &QueueClosedError{Operation: "enqueue batch"}
 		}
 	}
 }
@@ -422,7 +417,7 @@ func (q *Queue) EnqueueBatchWithContext(ctx context.Context, payloads []any) err
 			// Space might be available, retry
 			continue
 		case <-q.stopChan:
-			return fmt.Errorf("queue closed while waiting to enqueue batch")
+			return &QueueClosedError{Operation: "enqueue batch"}
 		case <-ctx.Done():
 			return ctx.Err()
 		}
