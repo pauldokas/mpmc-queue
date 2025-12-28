@@ -137,7 +137,9 @@ func TestConcurrentProducersAndConsumersNoRace(t *testing.T) {
 					"producer": producerID,
 					"item":     j,
 				}
-				q.TryEnqueue(payload)
+				if err := q.TryEnqueue(payload); err != nil {
+					t.Errorf("Producer %d failed to enqueue: %v", producerID, err)
+				}
 			}
 		}(i)
 	}

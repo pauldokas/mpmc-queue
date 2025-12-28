@@ -69,7 +69,9 @@ func TestConsumerPositionAfterPartialExpiration(t *testing.T) {
 
 	// Enqueue first 5 items
 	for i := 0; i < 5; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue item %d: %v", i, err)
+		}
 	}
 
 	// Wait a bit to ensure these items have different creation times
@@ -77,7 +79,9 @@ func TestConsumerPositionAfterPartialExpiration(t *testing.T) {
 
 	// Enqueue remaining 15 items (these will be newer)
 	for i := 5; i < 20; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue item %d: %v", i, err)
+		}
 	}
 
 	// Create consumer and read first 5 items
@@ -130,7 +134,9 @@ func TestConsumerReadingDuringExpiration(t *testing.T) {
 
 	// Enqueue first 5 items
 	for i := 0; i < 5; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue item %d: %v", i, err)
+		}
 	}
 
 	// Create a time gap - first 5 items will expire before the rest
@@ -138,7 +144,9 @@ func TestConsumerReadingDuringExpiration(t *testing.T) {
 
 	// Enqueue remaining 5 items (these are fresh)
 	for i := 5; i < 10; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue item %d: %v", i, err)
+		}
 	}
 
 	consumer := q.AddConsumer()
@@ -188,7 +196,9 @@ func TestMultipleConsumersAfterExpiration(t *testing.T) {
 
 	// Enqueue first 5 items that will be old
 	for i := 0; i < 5; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue item %d: %v", i, err)
+		}
 	}
 
 	// Wait to create age difference
@@ -196,7 +206,9 @@ func TestMultipleConsumersAfterExpiration(t *testing.T) {
 
 	// Enqueue remaining 10 items (newer)
 	for i := 5; i < 15; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue item %d: %v", i, err)
+		}
 	}
 
 	// Create 3 consumers at different positions

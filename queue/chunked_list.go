@@ -38,7 +38,7 @@ func (cl *ChunkedList) Enqueue(data *QueueData) error {
 	if cl.list.Len() == 0 {
 		// Create first chunk
 		lastChunk = NewChunkNode()
-		lastElement = cl.list.PushBack(lastChunk)
+		cl.list.PushBack(lastChunk)
 		cl.memoryTracker.AddChunk()
 	} else {
 		lastElement = cl.list.Back()
@@ -47,7 +47,7 @@ func (cl *ChunkedList) Enqueue(data *QueueData) error {
 		if lastChunk.IsFull() {
 			// Create new chunk
 			lastChunk = NewChunkNode()
-			lastElement = cl.list.PushBack(lastChunk)
+			cl.list.PushBack(lastChunk)
 			cl.memoryTracker.AddChunk()
 		}
 	}

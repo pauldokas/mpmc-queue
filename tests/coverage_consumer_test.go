@@ -22,7 +22,7 @@ func TestConsumer_GetNotificationChannel(t *testing.T) {
 
 	// Verify we can access the channel (type check)
 	// Don't actually read from it as it would block
-	var _ <-chan int = ch // Type assertion: it's a receive-only channel
+	var _ = ch // Type assertion: it's a receive-only channel
 }
 
 // TestConsumer_GetPosition tests GetPosition method
@@ -49,7 +49,7 @@ func TestConsumer_GetPosition(t *testing.T) {
 	consumer.TryRead()
 
 	// Position should have advanced
-	element, index = consumer.GetPosition()
+	element, _ = consumer.GetPosition()
 	if element == nil {
 		t.Error("Expected non-nil element after read")
 	}

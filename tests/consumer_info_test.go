@@ -16,7 +16,9 @@ func TestGetUnreadCountAccuracy(t *testing.T) {
 
 	// Add 50 items
 	for i := 0; i < 50; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue %d: %v", i, err)
+		}
 	}
 
 	consumer := q.AddConsumer()
@@ -40,10 +42,7 @@ func TestGetUnreadCountAccuracy(t *testing.T) {
 
 	// Read all remaining
 	readCount := 0
-	for {
-		if consumer.TryRead() == nil {
-			break
-		}
+	for consumer.TryRead() != nil {
 		readCount++
 	}
 
@@ -127,7 +126,9 @@ func TestGetUnreadCountAfterExpiration(t *testing.T) {
 
 	// Add items
 	for i := 0; i < 20; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue %d: %v", i, err)
+		}
 	}
 
 	consumer := q.AddConsumer()
@@ -162,7 +163,9 @@ func TestGetPositionInitial(t *testing.T) {
 
 	// Add data
 	for i := 0; i < 10; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue %d: %v", i, err)
+		}
 	}
 
 	consumer := q.AddConsumer()
@@ -184,7 +187,9 @@ func TestGetPositionAfterReads(t *testing.T) {
 
 	// Add data
 	for i := 0; i < 20; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue %d: %v", i, err)
+		}
 	}
 
 	consumer := q.AddConsumer()
@@ -213,7 +218,9 @@ func TestGetPositionConsistency(t *testing.T) {
 
 	// Add items
 	for i := 0; i < 30; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue %d: %v", i, err)
+		}
 	}
 
 	consumer := q.AddConsumer()
@@ -249,7 +256,9 @@ func TestGetDequeueHistoryGrowth(t *testing.T) {
 
 	// Add data
 	for i := 0; i < 50; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue %d: %v", i, err)
+		}
 	}
 
 	consumer := q.AddConsumer()
@@ -289,7 +298,9 @@ func TestGetDequeueHistoryConcurrent(t *testing.T) {
 
 	// Add data
 	for i := 0; i < 100; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue %d: %v", i, err)
+		}
 	}
 
 	consumer := q.AddConsumer()
@@ -327,7 +338,9 @@ func TestGetDequeueHistoryUnboundedGrowth(t *testing.T) {
 
 	// Add lots of data
 	for i := 0; i < 1000; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue %d: %v", i, err)
+		}
 	}
 
 	consumer := q.AddConsumer()
@@ -353,7 +366,9 @@ func TestHasMoreDataAtChunkBoundary(t *testing.T) {
 
 	// Add exactly 1000 items (one full chunk)
 	for i := 0; i < 1000; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue %d: %v", i, err)
+		}
 	}
 
 	consumer := q.AddConsumer()
@@ -384,7 +399,9 @@ func TestHasMoreDataCrossChunk(t *testing.T) {
 
 	// Add items spanning multiple chunks
 	for i := 0; i < 1500; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue %d: %v", i, err)
+		}
 	}
 
 	consumer := q.AddConsumer()
@@ -425,7 +442,7 @@ func TestHasMoreDataWithConcurrentEnqueue(t *testing.T) {
 	// Start enqueueing
 	go func() {
 		for i := 0; i < 50; i++ {
-			q.TryEnqueue(i)
+			_ = q.TryEnqueue(i)
 			time.Sleep(time.Millisecond)
 		}
 	}()
@@ -446,7 +463,9 @@ func TestMultipleConsumersPositionIndependence(t *testing.T) {
 
 	// Add data
 	for i := 0; i < 30; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue %d: %v", i, err)
+		}
 	}
 
 	c1 := q.AddConsumer()

@@ -19,7 +19,9 @@ func TestConsumerGroup_Distribution(t *testing.T) {
 	// Enqueue items
 	items := []string{"A", "B", "C", "D", "E", "F"}
 	for _, item := range items {
-		q.TryEnqueue(item)
+		if err := q.TryEnqueue(item); err != nil {
+			t.Fatalf("Failed to enqueue %s: %v", item, err)
+		}
 	}
 
 	results := make(map[string]bool)
@@ -75,15 +77,14 @@ func TestConsumerGroup_MixedWithIndependent(t *testing.T) {
 	// Enqueue
 	items := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 	for _, item := range items {
-		q.TryEnqueue(item)
+		if err := q.TryEnqueue(item); err != nil {
+			t.Fatalf("Failed to enqueue %d: %v", item, err)
+		}
 	}
 
 	// Independent consumer should get ALL items
 	countInd := 0
-	for {
-		if indC.TryRead() == nil {
-			break
-		}
+	for indC.TryRead() != nil {
 		countInd++
 	}
 	if countInd != len(items) {
@@ -121,8 +122,8 @@ func TestConsumerGroup_Expiration(t *testing.T) {
 	c1 := group.AddConsumer()
 
 	// Enqueue items
-	q.TryEnqueue("item1")
-	q.TryEnqueue("item2")
+	_ = q.TryEnqueue("item1")
+	_ = q.TryEnqueue("item2")
 
 	// Read one item
 	data := c1.TryRead()

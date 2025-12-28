@@ -348,7 +348,9 @@ func TestMemoryReleasedAfterExpiration(t *testing.T) {
 
 	// Add data
 	for i := 0; i < 100; i++ {
-		q.TryEnqueue(make([]byte, 1000))
+		if err := q.TryEnqueue(make([]byte, 1000)); err != nil {
+			t.Fatalf("Failed to enqueue item %d: %v", i, err)
+		}
 	}
 
 	memBefore := q.GetMemoryUsage()

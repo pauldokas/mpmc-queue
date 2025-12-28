@@ -16,7 +16,9 @@ func TestCloseBasic(t *testing.T) {
 
 	// Add some data
 	for i := 0; i < 10; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue item %d: %v", i, err)
+		}
 	}
 
 	// Add consumers
@@ -84,7 +86,9 @@ func TestCloseWithContext(t *testing.T) {
 
 	// Add some data
 	for i := 0; i < 5; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue item %d: %v", i, err)
+		}
 	}
 
 	// Close with timeout
@@ -109,7 +113,9 @@ func TestCloseWithContextTimeout(t *testing.T) {
 
 	// Add data
 	for i := 0; i < 10; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue item %d: %v", i, err)
+		}
 	}
 
 	// Create context that's already expired
@@ -249,7 +255,9 @@ func TestCloseWhileExpirationRunning(t *testing.T) {
 
 	// Add data that will expire
 	for i := 0; i < 50; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue item %d: %v", i, err)
+		}
 	}
 
 	// Wait for expiration to start
@@ -289,7 +297,7 @@ func TestMultipleBlockedOperationsOnClose(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			q.Enqueue(id)
+			_ = q.Enqueue(id)
 			completedCount.Add(1)
 		}(i)
 	}
@@ -301,10 +309,7 @@ func TestMultipleBlockedOperationsOnClose(t *testing.T) {
 			defer wg.Done()
 			consumer := q.AddConsumer()
 			// Drain the queue first
-			for {
-				if consumer.TryRead() == nil {
-					break
-				}
+			for consumer.TryRead() != nil {
 			}
 			// Now block on read
 			consumer.Read()
@@ -344,7 +349,9 @@ func TestCloseMemoryLeak(t *testing.T) {
 
 	// Add significant data
 	for i := 0; i < 1000; i++ {
-		q.TryEnqueue(make([]byte, 100))
+		if err := q.TryEnqueue(make([]byte, 100)); err != nil {
+			t.Fatalf("Failed to enqueue item %d: %v", i, err)
+		}
 	}
 
 	// Add consumers
@@ -382,7 +389,9 @@ func TestCloseWithActiveReads(t *testing.T) {
 
 	// Add data
 	for i := 0; i < 100; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue item %d: %v", i, err)
+		}
 	}
 
 	var wg sync.WaitGroup

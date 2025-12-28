@@ -21,7 +21,7 @@ test-all:
 
 # Run linter
 lint:
-	golangci-lint run
+	golangci-lint run ./queue/... ./tests/... ./cmd/...
 
 # Format code
 fmt:

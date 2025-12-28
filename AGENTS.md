@@ -1,8 +1,7 @@
 # Agent Guide: mpmc-queue
 
-**Context**: High-performance, concurrent, in-memory MPMC (Multi-Producer Multi-Consumer) queue in Go.
-**Module**: `mpmc-queue` | **Go**: 1.25+
-**Dependencies**: `github.com/google/uuid` (direct)
+**Context**: High-performance, concurrent, in-memory MPMC queue in Go 1.25+.
+**Dependencies**: `github.com/google/uuid` (direct).
 
 ## 🚨 Critical Mandates
 
@@ -24,35 +23,21 @@
     *   **Production**: Use blocking methods (`Enqueue`, `Read`) with `context.Context` cancellation.
     *   **Testing**: Use non-blocking methods (`TryEnqueue`, `TryRead`) to prevent test timeouts/hangs.
 
-## 🛠 Development Workflow
+## 🛠 Build & Test Commands
 
-### Build & Test Commands
-
-Use `make` for standard operations. The default `make` runs `lint build test`.
-
+**Standard Workflow** (Makefile):
 ```bash
-# Build (includes -race)
-make build
-
-# Run Unit Tests (Fast, skips integration)
-make test
-
-# Run Integration/Stress Tests (Slower)
-make test-integration
-
-# Run ALL Tests
-make test-all
-
-# Linting & Formatting
-make lint      # Runs golangci-lint
-make fmt       # Runs go fmt
+make build             # Build with -race
+make test              # Run unit tests (fast)
+make test-integration  # Run integration/stress tests
+make test-all          # Run ALL tests
+make lint              # Run golangci-lint
+make fmt               # Format code
 ```
 
-### Running Specific Tests
-For debugging, run individual tests with verbose output and race detection.
-
+**Specific Test Scenarios** (Debugging):
 ```bash
-# Run a specific test function
+# Run a SINGLE test function (Crucial for debugging)
 go test -v -race -run TestQueue_Enqueue ./tests/
 
 # Run a specific test file
@@ -62,9 +47,8 @@ go test -v -race ./tests/queue_test.go
 go test -v -race -run "TestConsumer_.*" ./tests/
 ```
 
-### Linting Configuration
-*   **Tool**: `golangci-lint`
-*   **Enabled**: `govet` (shadowing check enabled), `errcheck`, `staticcheck`, `gosimple`, `ineffassign`, `unused`, `typecheck`, `gofmt`, `goimports`.
+**Linting Configuration**:
+*   **Tool**: `golangci-lint` (govet, errcheck, staticcheck, gosimple, ineffassign, unused, typecheck).
 *   **Formatting**: `goimports` with `-local mpmc-queue` is enforced.
 
 ## 📏 Code Style & Conventions
@@ -79,7 +63,6 @@ Group imports into three blocks separated by newlines:
 import (
     "context"
     "sync"
-    "time"
 
     "github.com/google/uuid"
 
@@ -87,14 +70,14 @@ import (
 )
 ```
 
-### Naming
+### Naming Conventions
 *   **Exported**: `PascalCase`. Must have Godoc comments explaining *behavior* and *blocking semantics*.
 *   **Private**: `camelCase`.
-*   **Getters**: Use `Get` prefix (e.g., `GetName`, `GetStats`) - this is a project-specific convention.
+*   **Getters**: Use `Get` prefix (e.g., `GetName`, `GetStats`) - project-specific convention.
 *   **Interfaces**: `-er` suffix (e.g., `Reader`, `MemoryTracker`).
 
 ### Error Handling
-*   **Typed Errors**: Use specific types for logic branching (e.g., `&MemoryLimitError{}`, `&QueueClosedError{}`).
+*   **Typed Errors**: Use specific types for logic branching (e.g., `&MemoryLimitError{}`).
 *   **Wrapping**: Wrap errors to provide context: `fmt.Errorf("initializing consumer: %w", err)`.
 *   **Checks**: Use `errors.As` to check for specific error types.
 
@@ -106,32 +89,17 @@ import (
 
 ### The "Snapshot" Pattern
 To avoid holding locks across complex operations or calling into other locked components:
-
 1.  Lock the component (e.g., Consumer).
 2.  Copy the necessary state (e.g., current index/pointer).
 3.  Unlock the component.
 4.  Lock the parent/dependency (e.g., Queue) using the copied state.
 
-```go
-// Example: Reading without holding Consumer lock while accessing Queue
-c.mutex.Lock()
-pos := c.chunkElement
-c.mutex.Unlock()
-
-c.queue.mutex.RLock()
-defer c.queue.mutex.RUnlock()
-// ... safely access queue using pos ...
-```
-
 ### Notification Channels
-*   **Non-Blocking Sends**: Never block on notification channels (`enqueueNotify`, etc.). Use `select` with `default`.
-
+*   **Non-Blocking Sends**: Never block on notification channels. Use `select` with `default`.
 ```go
 select {
 case c.notifyChan <- struct{}{}:
-    // Notified
-default:
-    // Channel full, skip (receiver already has a pending signal)
+default: // Channel full, receiver already notified
 }
 ```
 
@@ -144,37 +112,22 @@ default:
 5.  **Assertions**: Fail fast with `t.Fatalf` for setup/critical errors; use `t.Errorf` for logic checks.
 
 ### Example Test Template
-
 ```go
 func TestConcurrency_Safe(t *testing.T) {
     q := queue.NewQueue("test-queue")
     defer q.Close()
 
     var wg sync.WaitGroup
-    wg.Add(2)
+    wg.Add(1)
 
-    // Producer
     go func() {
         defer wg.Done()
+        // Use TryEnqueue in tests to avoid deadlocks/hangs
         if err := q.TryEnqueue("data"); err != nil {
             t.Errorf("Enqueue failed: %v", err)
         }
     }()
-
-    // Consumer
-    go func() {
-        defer wg.Done()
-        c := q.AddConsumer()
-        // Spin/Wait for data
-        for i := 0; i < 100; i++ {
-            if val := c.TryRead(); val != nil {
-                return
-            }
-            time.Sleep(time.Millisecond)
-        }
-        t.Error("Did not receive data")
-    }()
-
+    
     wg.Wait()
 }
 ```

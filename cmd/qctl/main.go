@@ -65,8 +65,7 @@ Commands:
   stats <name>             Show stats for a queue
   pub <name> <data...>     Enqueue a string message
   sub <name>               Create a background consumer that prints messages
-  exit                     Exit the shell
-`)
+  exit                     Exit the shell`)
 }
 
 func handleCreate(args []string) {

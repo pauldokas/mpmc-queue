@@ -49,14 +49,6 @@ func (cg *ConsumerGroup) getPosition() (*list.Element, int) {
 	return cg.chunkElement, cg.indexInChunk
 }
 
-// setPosition sets the group's position safely
-func (cg *ConsumerGroup) setPosition(element *list.Element, index int) {
-	cg.mutex.Lock()
-	defer cg.mutex.Unlock()
-	cg.chunkElement = element
-	cg.indexInChunk = index
-}
-
 // TryRead attempts to read the next item for the group
 // This is called by consumers belonging to the group
 func (cg *ConsumerGroup) TryRead() *QueueData {

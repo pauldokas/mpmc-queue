@@ -144,7 +144,7 @@ func (mt *MemoryTracker) estimateValueSize(v reflect.Value) (int64, bool) {
 	}
 
 	var size int64
-	var isFixed bool = true
+	var isFixed = true
 
 	switch v.Kind() {
 	case reflect.Bool:

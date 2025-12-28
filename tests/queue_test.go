@@ -116,7 +116,9 @@ func TestNewConsumerReadsAllData(t *testing.T) {
 	// Enqueue data
 	payloads := []any{"item1", "item2", "item3"}
 	for _, payload := range payloads {
-		q.TryEnqueue(payload)
+		if err := q.TryEnqueue(payload); err != nil {
+			t.Fatalf("Failed to enqueue %v: %v", payload, err)
+		}
 	}
 
 	// Create consumer and read some data
@@ -124,7 +126,9 @@ func TestNewConsumerReadsAllData(t *testing.T) {
 	consumer1.TryRead() // Read first item
 
 	// Add more data
-	q.TryEnqueue("item4")
+	if err := q.TryEnqueue("item4"); err != nil {
+		t.Fatalf("Failed to enqueue item4: %v", err)
+	}
 
 	// Create new consumer
 	consumer2 := q.AddConsumer()
@@ -199,7 +203,9 @@ func TestConcurrentConsumers(t *testing.T) {
 
 	// Enqueue items
 	for i := 0; i < numItems; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue item %d: %v", i, err)
+		}
 	}
 
 	// Create consumers and track what they read
@@ -346,7 +352,9 @@ func TestConsumerStats(t *testing.T) {
 
 	// Enqueue items
 	for i := 0; i < 10; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue item %d: %v", i, err)
+		}
 	}
 
 	consumer := q.AddConsumer()

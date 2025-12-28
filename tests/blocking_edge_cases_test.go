@@ -102,7 +102,9 @@ func TestMultipleConsumersBlockedOnEmpty(t *testing.T) {
 
 	// Add data
 	for i := 0; i < 5; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue %d: %v", i, err)
+		}
 		time.Sleep(50 * time.Millisecond)
 	}
 

@@ -61,7 +61,9 @@ func TestRemoveConsumerDuringRead(t *testing.T) {
 
 	// Add data
 	for i := 0; i < 100; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue %d: %v", i, err)
+		}
 	}
 
 	consumer := q.AddConsumer()
@@ -217,7 +219,9 @@ func TestConsumerCleanupOnRemoval(t *testing.T) {
 
 	// Add data
 	for i := 0; i < 10; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue %d: %v", i, err)
+		}
 	}
 
 	consumer := q.AddConsumer()
@@ -257,7 +261,9 @@ func TestAddConsumerAfterQueueHasData(t *testing.T) {
 
 	// Add data first
 	for i := 0; i < 50; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue %d: %v", i, err)
+		}
 	}
 
 	// Now add consumer - should start from beginning
@@ -285,7 +291,9 @@ func TestConcurrentConsumerAddRemove(t *testing.T) {
 
 	// Add some data
 	for i := 0; i < 100; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue %d: %v", i, err)
+		}
 	}
 
 	var wg sync.WaitGroup

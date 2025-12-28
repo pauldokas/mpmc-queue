@@ -15,7 +15,9 @@ func TestHasMoreDataRace(t *testing.T) {
 
 	// Add initial data
 	for i := 0; i < 5; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue item %d: %v", i, err)
+		}
 	}
 
 	consumer := q.AddConsumer()
@@ -39,7 +41,7 @@ func TestHasMoreDataRace(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 100; i++ {
-			q.TryEnqueue(i)
+			_ = q.TryEnqueue(i)
 			time.Sleep(1 * time.Millisecond)
 		}
 	}()
@@ -54,7 +56,9 @@ func TestHasMoreDataWithReading(t *testing.T) {
 
 	// Add data
 	for i := 0; i < 100; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue item %d: %v", i, err)
+		}
 	}
 
 	consumer := q.AddConsumer()
@@ -90,7 +94,9 @@ func TestMultipleConsumersHasMoreData(t *testing.T) {
 
 	// Add initial data
 	for i := 0; i < 50; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue item %d: %v", i, err)
+		}
 	}
 
 	const numConsumers = 10
@@ -117,7 +123,7 @@ func TestMultipleConsumersHasMoreData(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 30; i++ {
-			q.TryEnqueue(i + 1000)
+			_ = q.TryEnqueue(i + 1000)
 			time.Sleep(2 * time.Millisecond)
 		}
 	}()

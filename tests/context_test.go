@@ -90,7 +90,7 @@ func TestReadWithContext(t *testing.T) {
 	// 3. Test success path
 	go func() {
 		time.Sleep(50 * time.Millisecond)
-		q.TryEnqueue("success")
+		_ = q.TryEnqueue("success")
 	}()
 
 	ctx, cancel = context.WithTimeout(context.Background(), 1*time.Second)
@@ -149,7 +149,9 @@ func TestReadBatchWithContext(t *testing.T) {
 	// 2. Test partial read before timeout
 	// Since ReadBatchWithContext doesn't block for full batch (only first item),
 	// we need to ensure it gets at least one item
-	q.TryEnqueue("item1")
+	if err := q.TryEnqueue("item1"); err != nil {
+		t.Fatalf("Failed to enqueue item1: %v", err)
+	}
 
 	ctx, cancel = context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
@@ -177,7 +179,7 @@ func TestContextCancellationConcurrent(t *testing.T) {
 			defer wg.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 			defer cancel()
-			consumer.ReadWithContext(ctx)
+			_, _ = consumer.ReadWithContext(ctx)
 		}()
 	}
 

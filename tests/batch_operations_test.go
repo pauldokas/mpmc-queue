@@ -176,7 +176,9 @@ func TestTryReadBatch(t *testing.T) {
 
 	// Add items
 	for i := 0; i < 20; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue %d: %v", i, err)
+		}
 	}
 
 	consumer := q.AddConsumer()
@@ -227,7 +229,9 @@ func TestTryReadBatchZeroLimit(t *testing.T) {
 
 	// Add items
 	for i := 0; i < 10; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue %d: %v", i, err)
+		}
 	}
 
 	consumer := q.AddConsumer()
@@ -246,7 +250,9 @@ func TestTryReadBatchNegativeLimit(t *testing.T) {
 
 	// Add items
 	for i := 0; i < 10; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue %d: %v", i, err)
+		}
 	}
 
 	consumer := q.AddConsumer()
@@ -284,8 +290,12 @@ func TestReadBatchBlocking(t *testing.T) {
 	}
 
 	// Add some items
-	q.TryEnqueue("item1")
-	q.TryEnqueue("item2")
+	if err := q.TryEnqueue("item1"); err != nil {
+		t.Fatalf("Failed to enqueue item1: %v", err)
+	}
+	if err := q.TryEnqueue("item2"); err != nil {
+		t.Fatalf("Failed to enqueue item2: %v", err)
+	}
 
 	// Should unblock and return 2 items
 	time.Sleep(100 * time.Millisecond)
@@ -427,7 +437,9 @@ func TestReadBatchFewerItemsThanRequested(t *testing.T) {
 
 	// Add only 5 items
 	for i := 0; i < 5; i++ {
-		q.TryEnqueue(i)
+		if err := q.TryEnqueue(i); err != nil {
+			t.Fatalf("Failed to enqueue %d: %v", i, err)
+		}
 	}
 
 	consumer := q.AddConsumer()

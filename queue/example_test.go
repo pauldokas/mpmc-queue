@@ -41,7 +41,10 @@ func ExampleConsumer_Read() {
 	c := q.AddConsumer()
 	defer c.Close()
 
-	q.Enqueue("hello world")
+	if err := q.Enqueue("hello world"); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
 
 	// Read the item (blocks until data is available)
 	item := c.Read()
@@ -68,7 +71,10 @@ func ExampleConsumer_TryRead() {
 	q := queue.NewQueue("logs")
 	defer q.Close()
 
-	q.Enqueue("log entry 1")
+	if err := q.Enqueue("log entry 1"); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
 
 	c := q.AddConsumer()
 
