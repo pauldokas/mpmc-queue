@@ -74,6 +74,48 @@ func (mt *MemoryTracker) estimatePayloadSize(payload any) int64 {
 		return 0
 	}
 
+	// Fast path for common types to avoid reflection overhead
+	switch v := payload.(type) {
+	case string:
+		return int64(len(v))
+	case []byte:
+		return int64(len(v))
+	case int:
+		return int64(unsafe.Sizeof(v))
+	case int64:
+		return int64(unsafe.Sizeof(v))
+	case int32:
+		return int64(unsafe.Sizeof(v))
+	case int16:
+		return int64(unsafe.Sizeof(v))
+	case int8:
+		return 1
+	case uint:
+		return int64(unsafe.Sizeof(v))
+	case uint64:
+		return int64(unsafe.Sizeof(v))
+	case uint32:
+		return int64(unsafe.Sizeof(v))
+	case uint16:
+		return int64(unsafe.Sizeof(v))
+	case uint8:
+		return 1
+	case bool:
+		return 1
+	case float64:
+		return int64(unsafe.Sizeof(v))
+	case float32:
+		return int64(unsafe.Sizeof(v))
+	}
+
+	// Check for Size() method (Sizer interface)
+	type Sizer interface {
+		Size() int64
+	}
+	if s, ok := payload.(Sizer); ok {
+		return s.Size()
+	}
+
 	v := reflect.ValueOf(payload)
 	size, _ := mt.estimateValueSize(v)
 	return size
