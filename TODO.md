@@ -386,9 +386,15 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 - **Files**: `queue/queue.go`
 
 ### Add Consumer Groups
-- **Status**: ⚠️ Not Started
+- **Status**: ✅ Completed (2025-12-28)
 - **Task**: Load-balanced consumers (each item read by one consumer in group)
 - **Difference**: Current model has each consumer read all items independently
+- **Features**:
+  - `Queue.AddConsumerGroup(name)` creates a shared group
+  - `Group.AddConsumer()` creates consumers that share the group's position
+  - Thread-safe distribution of items among group members
+  - Fully integrated with expiration logic
+  - Fixed bug in `Consumer.TryRead` where position was lost at end of chunk
 - **Use Cases**:
   - Load balancing across workers
   - Parallel processing with work distribution
@@ -398,9 +404,7 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
   func (q *Queue) AddConsumerGroup(groupName string) *ConsumerGroup
   func (cg *ConsumerGroup) AddConsumer() *Consumer
   ```
-- **Impact**: New usage pattern for load distribution
-- **Complexity**: High - requires different queue semantics
-- **Files**: `queue/consumer_group.go`
+- **Files**: `queue/consumer_group.go`, `queue/consumer.go`, `queue/queue.go`, `tests/consumer_group_test.go`
 
 ### Add Message Acknowledgment Pattern
 - **Status**: ⚠️ Not Started

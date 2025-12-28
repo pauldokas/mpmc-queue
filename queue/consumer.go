@@ -28,6 +28,7 @@ type Consumer struct {
 	totalItemsRead atomic.Int64    // Total items this consumer has read
 	dequeueHistory []DequeueRecord // Track dequeue events locally
 	closed         atomic.Bool     // Tracks if consumer is closed
+	group          *ConsumerGroup  // Reference to parent group (nil if independent)
 }
 
 // NewConsumer creates a new consumer
@@ -40,6 +41,7 @@ func NewConsumer(queue *Queue) *Consumer {
 		queue:          queue,
 		lastReadTime:   time.Now(),
 		dequeueHistory: make([]DequeueRecord, 0, 100), // Pre-allocate some capacity
+		group:          nil,
 	}
 }
 
@@ -55,6 +57,9 @@ func (c *Consumer) GetNotificationChannel() <-chan int {
 
 // GetPosition returns the consumer's current position
 func (c *Consumer) GetPosition() (*list.Element, int) {
+	if c.group != nil {
+		return c.group.getPosition()
+	}
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	return c.chunkElement, c.indexInChunk
@@ -62,6 +67,10 @@ func (c *Consumer) GetPosition() (*list.Element, int) {
 
 // getPositionUnsafe returns position without locking (caller must hold consumer lock)
 func (c *Consumer) getPositionUnsafe() (*list.Element, int) {
+	if c.group != nil {
+		// Even if unsafe requested, group access must be safe because group lock is distinct
+		return c.group.getPosition()
+	}
 	return c.chunkElement, c.indexInChunk
 }
 
@@ -76,6 +85,21 @@ func (c *Consumer) SetPosition(element *list.Element, index int) {
 // TryRead attempts to read the next available data item for this consumer without blocking
 // Returns nil if no data is available
 func (c *Consumer) TryRead() *QueueData {
+	if c.group != nil {
+		data := c.group.TryRead()
+		if data != nil {
+			c.mutex.Lock()
+			c.dequeueHistory = append(c.dequeueHistory, DequeueRecord{
+				DataID:    data.ID,
+				Timestamp: time.Now(),
+			})
+			c.lastReadTime = time.Now()
+			c.totalItemsRead.Add(1)
+			c.mutex.Unlock()
+		}
+		return data
+	}
+
 	// Initialize position if this is the first read
 	c.mutex.Lock()
 	needsInit := c.chunkElement == nil
@@ -155,8 +179,10 @@ func (c *Consumer) TryRead() *QueueData {
 			c.mutex.Lock()
 			// Only update if position hasn't changed
 			if c.chunkElement == currentElement && c.indexInChunk == currentIndex {
-				c.chunkElement = nextElement
-				c.indexInChunk = 0
+				if nextElement != nil {
+					c.chunkElement = nextElement
+					c.indexInChunk = 0
+				}
 			}
 			c.mutex.Unlock()
 
@@ -310,6 +336,10 @@ func (c *Consumer) ReadBatchWithContext(ctx context.Context, limit int) ([]*Queu
 
 // HasMoreData checks if there's more data available for this consumer
 func (c *Consumer) HasMoreData() bool {
+	if c.group != nil {
+		return c.group.HasMoreData()
+	}
+
 	// Read position without holding lock to avoid lock ordering issues
 	c.mutex.Lock()
 	chunkElement := c.chunkElement
@@ -343,6 +373,10 @@ func (c *Consumer) HasMoreData() bool {
 
 // GetUnreadCount returns the number of unread items for this consumer
 func (c *Consumer) GetUnreadCount() int64 {
+	if c.group != nil {
+		return c.group.GetUnreadCount()
+	}
+
 	// Read position without holding lock to avoid lock ordering issues
 	c.mutex.Lock()
 	chunkElement := c.chunkElement
@@ -365,6 +399,21 @@ func (c *Consumer) GetUnreadCount() int64 {
 
 // GetStats returns consumer statistics
 func (c *Consumer) GetStats() ConsumerStats {
+	if c.group != nil {
+		c.mutex.Lock()
+		id := c.id
+		totalItemsRead := c.totalItemsRead.Load()
+		lastReadTime := c.lastReadTime
+		c.mutex.Unlock()
+
+		return ConsumerStats{
+			ID:             id,
+			TotalItemsRead: totalItemsRead,
+			UnreadItems:    c.group.GetUnreadCount(),
+			LastReadTime:   lastReadTime,
+		}
+	}
+
 	// Read consumer state without holding lock to avoid lock ordering issues
 	c.mutex.Lock()
 	id := c.id
@@ -420,6 +469,9 @@ func (c *Consumer) NotifyExpiredItems(count int) {
 // This is called by the queue when items are removed due to expiration
 // NOTE: This must be called while holding queue.mutex to safely traverse the list
 func (c *Consumer) UpdatePositionAfterExpiration(expiredCount int, newFirstElement *list.Element, removalInfo []ChunkRemovalInfo) {
+	if c.group != nil {
+		return // Group handles position update
+	}
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
@@ -483,6 +535,21 @@ func (c *Consumer) Close() {
 // The predicate function should return true for items that should be returned
 // Note: This advances the consumer position as it searches, consuming non-matching items
 func (c *Consumer) TryReadWhere(predicate func(*QueueData) bool) *QueueData {
+	if c.group != nil {
+		data := c.group.TryReadWhere(predicate)
+		if data != nil {
+			c.mutex.Lock()
+			c.dequeueHistory = append(c.dequeueHistory, DequeueRecord{
+				DataID:    data.ID,
+				Timestamp: time.Now(),
+			})
+			c.lastReadTime = time.Now()
+			c.totalItemsRead.Add(1)
+			c.mutex.Unlock()
+		}
+		return data
+	}
+
 	if predicate == nil {
 		return nil
 	}
@@ -576,6 +643,7 @@ type ConsumerStats struct {
 // ConsumerManager manages multiple consumers for a queue
 type ConsumerManager struct {
 	consumers       map[string]*Consumer
+	groups          map[string]*ConsumerGroup
 	activeConsumers atomic.Value // Stores []*Consumer
 	mutex           sync.RWMutex
 	queue           *Queue
@@ -585,10 +653,27 @@ type ConsumerManager struct {
 func NewConsumerManager(queue *Queue) *ConsumerManager {
 	cm := &ConsumerManager{
 		consumers: make(map[string]*Consumer),
+		groups:    make(map[string]*ConsumerGroup),
 		queue:     queue,
 	}
 	cm.activeConsumers.Store(make([]*Consumer, 0))
 	return cm
+}
+
+// AddConsumerToGroup adds a new consumer to a specific group
+func (cm *ConsumerManager) AddConsumerToGroup(group *ConsumerGroup) *Consumer {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+
+	consumer := NewConsumer(cm.queue)
+	consumer.group = group
+
+	// Position is managed by the group, so we don't need to set it here
+
+	cm.consumers[consumer.GetID()] = consumer
+	cm.updateActiveConsumers()
+
+	return consumer
 }
 
 // AddConsumer adds a new consumer to the queue
@@ -612,6 +697,20 @@ func (cm *ConsumerManager) AddConsumer() *Consumer {
 	cm.updateActiveConsumers()
 
 	return consumer
+}
+
+// AddGroup adds a new consumer group or returns existing one
+func (cm *ConsumerManager) AddGroup(name string) *ConsumerGroup {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+
+	if group, exists := cm.groups[name]; exists {
+		return group
+	}
+
+	group := NewConsumerGroup(name, cm.queue)
+	cm.groups[name] = group
+	return group
 }
 
 // RemoveConsumer removes a consumer from the queue
@@ -666,9 +765,9 @@ func (cm *ConsumerManager) NotifyAllConsumersOfExpiration(expiredCounts map[stri
 		totalExpired += info.RemovedCount
 	}
 
-	for consumerID, consumer := range cm.consumers {
+	for _, consumer := range cm.consumers {
 		// Notify consumers about their unread expired items
-		if expiredCount, hasExpired := expiredCounts[consumerID]; hasExpired && expiredCount > 0 {
+		if expiredCount, hasExpired := expiredCounts[consumer.GetID()]; hasExpired && expiredCount > 0 {
 			consumer.NotifyExpiredItems(expiredCount)
 		}
 
@@ -676,6 +775,13 @@ func (cm *ConsumerManager) NotifyAllConsumersOfExpiration(expiredCounts map[stri
 		// This is necessary because chunk compaction affects all consumer positions
 		if totalExpired > 0 {
 			consumer.UpdatePositionAfterExpiration(totalExpired, newFirstElement, removalInfo)
+		}
+	}
+
+	// Update Consumer Groups positions
+	if totalExpired > 0 {
+		for _, group := range cm.groups {
+			group.UpdatePositionAfterExpiration(totalExpired, newFirstElement, removalInfo)
 		}
 	}
 }

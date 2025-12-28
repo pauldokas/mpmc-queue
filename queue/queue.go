@@ -429,6 +429,11 @@ func (q *Queue) AddConsumer() *Consumer {
 	return q.consumers.AddConsumer()
 }
 
+// AddConsumerGroup adds a new consumer group to the queue
+func (q *Queue) AddConsumerGroup(name string) *ConsumerGroup {
+	return q.consumers.AddGroup(name)
+}
+
 // RemoveConsumer removes a consumer from the queue
 func (q *Queue) RemoveConsumer(consumerID string) bool {
 	return q.consumers.RemoveConsumer(consumerID)

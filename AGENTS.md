@@ -1,10 +1,12 @@
-# Agent Development Guide for mpmc-queue
+# Agent Guide: mpmc-queue
 
-**Stack**: Go 1.25+ | **Module**: `mpmc-queue` | **Deps**: `github.com/google/uuid`
+**Context**: High-performance, concurrent, in-memory MPMC queue in Go.
+**Module**: `mpmc-queue` | **Go**: 1.25+
+**Dependencies**: `github.com/google/uuid` (direct)
 
 ## 🚨 Critical Mandates
-1.  **Concurrency Safety**: ALWAYS acquire `Queue.mutex` BEFORE `Consumer.mutex`. NEVER hold `Consumer.mutex` while acquiring `Queue.mutex`.
-2.  **Race Detection**: ALWAYS run tests with `-race`. This is non-negotiable for this codebase.
+1.  **Concurrency Safety**: `Queue.mutex` > `Consumer.mutex`. NEVER hold `Consumer.mutex` while acquiring `Queue.mutex`.
+2.  **Race Detection**: ALWAYS run tests with `-race`. This is non-negotiable.
 3.  **Immutability**: `QueueData` is immutable. NEVER modify it after creation.
 4.  **Locking**: Use `RLock` for reads, `Lock` for writes. Defer `Unlock` immediately after locking.
 5.  **Memory**: Pre-validate data size with `MemoryTracker.CanAddData()` before adding to the queue.
@@ -68,7 +70,7 @@ import (
 -   **Exported**: `PascalCase` (e.g., `Queue`, `Enqueue`). Must have Godoc comments explaining *behavior* and *blocking semantics*.
 -   **Private**: `camelCase` (e.g., `expirationWorker`, `cleanupExpiredItems`).
 -   **Interfaces**: Name with `-er` suffix if simple (e.g., `Reader`), or descriptive (e.g., `MemoryTracker`).
--   **Constants**: `PascalCase` for exported (e.g., `ChunkSize`, `MaxQueueMemory`), `camelCase` for private.
+-   **Constants**: `PascalCase` for exported, `camelCase` for private.
 
 ### Error Handling
 -   **Custom Errors**: Use specific types like `MemoryLimitError` for logic branching.
@@ -76,7 +78,8 @@ import (
 -   **Checking**: Use `errors.As` to check for specific error types.
 
 ### Types & Memory
--   **Atomics**: Use `atomic.Int64`, `atomic.Bool` for lock-free counters/flags (e.g., `totalItemsRead`, `closed`).
+-   **Generics**: Use `any` instead of `interface{}`.
+-   **Atomics**: Use `atomic.Int64`, `atomic.Bool` for lock-free counters/flags.
 -   **Unsafe**: `unsafe.Sizeof()` is used for accurate memory estimation in `MemoryTracker`. Be cautious when modifying structs.
 
 ## 🔄 Concurrency Patterns
