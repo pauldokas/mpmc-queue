@@ -443,7 +443,7 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 ## Priority 8 - Documentation & Ecosystem
 
 ### Add Architecture Decision Records (ADRs)
-- **Status**: ⚠️ Not Started
+- **Status**: ✅ Completed (2025-12-28)
 - **Task**: Document why certain design choices were made
 - **Topics**:
   - Why chunked list vs other data structures
@@ -455,7 +455,7 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 - **Files**: `docs/adr/` directory
 
 ### Add Comparison with Other Queue Implementations
-- **Status**: ⚠️ Not Started
+- **Status**: ✅ Completed (2025-12-28)
 - **Task**: Benchmark and feature comparison
 - **Comparisons**:
   - vs Go channels (when to use each)
@@ -467,7 +467,7 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 - **Files**: `docs/COMPARISON.md`
 
 ### Add CLI Tool
-- **Status**: ⚠️ Not Started
+- **Status**: ✅ Completed (2025-12-28)
 - **Task**: Command-line tool for queue management
 - **Features**:
   - Inspect queue stats (`qctl stats <queue-name>`)
