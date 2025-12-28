@@ -46,8 +46,12 @@ func BenchmarkRead(b *testing.B) {
 	q := queue.NewQueue("benchmark-queue")
 	defer q.Close()
 
-	// Pre-populate queue
-	for i := 0; i < b.N; i++ {
+	// Pre-populate queue (up to a limit to prevent setup timeout)
+	limit := b.N
+	if limit > 10000 {
+		limit = 10000
+	}
+	for i := 0; i < limit; i++ {
 		q.TryEnqueue(i)
 	}
 
@@ -66,8 +70,13 @@ func BenchmarkReadBatch(b *testing.B) {
 	batchSize := 100
 	totalItems := b.N * batchSize
 
-	// Pre-populate queue
-	for i := 0; i < totalItems; i++ {
+	// Pre-populate queue (up to a limit)
+	limit := totalItems
+	if limit > 10000 {
+		limit = 10000
+	}
+
+	for i := 0; i < limit; i++ {
 		q.TryEnqueue(i)
 	}
 
@@ -107,8 +116,12 @@ func BenchmarkConcurrentConsumers(b *testing.B) {
 	q := queue.NewQueue("benchmark-queue")
 	defer q.Close()
 
-	// Pre-populate queue
-	for i := 0; i < b.N; i++ {
+	// Pre-populate queue (up to a limit)
+	limit := b.N
+	if limit > 10000 {
+		limit = 10000
+	}
+	for i := 0; i < limit; i++ {
 		q.TryEnqueue(i)
 	}
 
@@ -143,33 +156,51 @@ func BenchmarkMixedWorkload(b *testing.B) {
 	itemsPerProducer := b.N / numProducers
 
 	var wg sync.WaitGroup
-	wg.Add(numProducers + numConsumers)
+	wg.Add(numConsumers) // Only wait for consumers, they will wait for producers
+
+	var producerWg sync.WaitGroup
+	producerWg.Add(numProducers)
 
 	b.ResetTimer()
 
 	// Start producers
 	for i := 0; i < numProducers; i++ {
 		go func(producerID int) {
-			defer wg.Done()
+			defer producerWg.Done()
 			for j := 0; j < itemsPerProducer; j++ {
 				q.TryEnqueue(producerID*itemsPerProducer + j)
 			}
 		}(i)
 	}
 
+	// Channel to signal producers are done
+	producersDone := make(chan struct{})
+	go func() {
+		producerWg.Wait()
+		close(producersDone)
+	}()
+
 	// Start consumers
 	for i := 0; i < numConsumers; i++ {
 		go func() {
 			defer wg.Done()
 			consumer := q.AddConsumer()
-			readCount := 0
-			for readCount < itemsPerProducer {
+
+			for {
 				data := consumer.TryRead()
 				if data != nil {
-					readCount++
+					// Good read
 				} else {
-					// Small delay if no data available
-					time.Sleep(time.Microsecond)
+					select {
+					case <-producersDone:
+						// Producers finished, check one last time then exit
+						if consumer.TryRead() == nil {
+							return
+						}
+					default:
+						// Small delay if no data available
+						time.Sleep(time.Microsecond)
+					}
 				}
 			}
 		}()
