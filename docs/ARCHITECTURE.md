@@ -174,9 +174,19 @@ map[string]*Consumer
 
 ---
 
-### 7. MemoryTracker
- 
- Tracks memory usage with configurable limit (default 1MB).
+### 7. ConsumerGroup
+
+Manages shared state for a group of consumers.
+
+- **Shared Position**: All consumers in the group read from the same `chunkElement` and `index`.
+- **Load Balancing**: `TryRead` atomically advances the shared position, ensuring each item is delivered to exactly one consumer in the group.
+- **Thread Safety**: Uses mutex to protect shared position updates.
+
+---
+
+### 8. MemoryTracker
+
+Tracks memory usage with configurable limit (default 1MB).
 
 
 ```

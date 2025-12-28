@@ -14,6 +14,7 @@ A high-performance, thread-safe, memory-constrained multi-producer multi-consume
 - ✅ **Memory Constrained**: Configurable memory limit (default 1MB) with real-time usage tracking
 - ✅ **Time-based Expiration**: Automatic cleanup of expired items (10-minute default TTL)
 - ✅ **Independent Consumers**: Each consumer reads all data at their own pace
+- ✅ **Consumer Groups**: Load balancing support for distributing work among consumers
 - ✅ **Chunked Storage**: Efficient storage using doubly-linked list of 1000-item chunks
 - ✅ **Immutable Data**: QueueData is immutable after creation (thread-safe without locks)
 - ✅ **Consumer Notifications**: Alerts when data expires before being read

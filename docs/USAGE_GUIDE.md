@@ -104,6 +104,33 @@ for i := 0; i < 2; i++ {
 
 ---
 
+### Consumer Groups (Load Balancing)
+
+Use consumer groups to distribute work among multiple consumers (competing consumers pattern).
+
+```go
+q := queue.NewQueue("work-queue")
+defer q.Close()
+
+// Create a consumer group
+group := q.AddConsumerGroup("worker-pool")
+
+// Add consumers to the group
+w1 := group.AddConsumer()
+w2 := group.AddConsumer()
+
+// Enqueue 10 items
+for i := 0; i < 10; i++ {
+    q.Enqueue(i)
+}
+
+// Consumers share the work
+// w1 might get 5 items, w2 might get 5 items
+// They will NOT process the same items
+```
+
+---
+
 ### Concurrent Producers
 
 ```go

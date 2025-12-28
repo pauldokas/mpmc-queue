@@ -272,6 +272,23 @@ consumer2 := q.AddConsumer() // Independent consumer
 
 ---
 
+#### `AddConsumerGroup(name string) *ConsumerGroup`
+
+Creates or retrieves a consumer group for load-balanced consumption.
+
+**Parameters:**
+- `name` (string): Group name
+
+**Returns:**
+- `*ConsumerGroup`: The consumer group instance
+
+**Example:**
+```go
+group := q.AddConsumerGroup("worker-pool")
+```
+
+---
+
 #### `RemoveConsumer(consumerID string) bool`
 
 Removes a consumer and cleans up resources.
