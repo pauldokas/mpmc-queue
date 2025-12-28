@@ -99,14 +99,7 @@ func (q *Queue) TryEnqueue(payload any) error {
 
 	err := q.data.Enqueue(data)
 	if err == nil {
-		// Notify waiting consumers (send multiple to wake multiple waiters)
-		for i := 0; i < 10; i++ {
-			select {
-			case q.enqueueNotify <- struct{}{}:
-			default:
-				break
-			}
-		}
+		q.notifyWaitingConsumers()
 	}
 	return err
 }
@@ -121,14 +114,7 @@ func (q *Queue) Enqueue(payload any) error {
 		err := q.data.Enqueue(data)
 		if err == nil {
 			q.mutex.Unlock()
-			// Notify waiting consumers (send multiple to wake multiple waiters)
-			for i := 0; i < 10; i++ {
-				select {
-				case q.enqueueNotify <- struct{}{}:
-				default:
-					break
-				}
-			}
+			q.notifyWaitingConsumers()
 			return nil
 		}
 
@@ -161,14 +147,7 @@ func (q *Queue) EnqueueWithContext(ctx context.Context, payload any) error {
 		err := q.data.Enqueue(data)
 		if err == nil {
 			q.mutex.Unlock()
-			// Notify waiting consumers (send multiple to wake multiple waiters)
-			for i := 0; i < 10; i++ {
-				select {
-				case q.enqueueNotify <- struct{}{}:
-				default:
-					break
-				}
-			}
+			q.notifyWaitingConsumers()
 			return nil
 		}
 
@@ -252,11 +231,7 @@ func (q *Queue) TryEnqueueBatch(payloads []any) error {
 		}
 	}
 
-	// Notify waiting consumers
-	select {
-	case q.enqueueNotify <- struct{}{}:
-	default:
-	}
+	q.notifyWaitingConsumers()
 
 	return nil
 }
@@ -313,15 +288,7 @@ func (q *Queue) EnqueueBatch(payloads []any) error {
 				}
 			}
 			q.mutex.Unlock()
-
-			// Notify waiting consumers (send multiple to wake multiple waiters)
-			for i := 0; i < 10; i++ {
-				select {
-				case q.enqueueNotify <- struct{}{}:
-				default:
-					break
-				}
-			}
+			q.notifyWaitingConsumers()
 			return nil
 		}
 
@@ -397,15 +364,7 @@ func (q *Queue) EnqueueBatchWithContext(ctx context.Context, payloads []any) err
 				}
 			}
 			q.mutex.Unlock()
-
-			// Notify waiting consumers (send multiple to wake multiple waiters)
-			for i := 0; i < 10; i++ {
-				select {
-				case q.enqueueNotify <- struct{}{}:
-				default:
-					break
-				}
-			}
+			q.notifyWaitingConsumers()
 			return nil
 		}
 
