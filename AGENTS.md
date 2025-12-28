@@ -1,59 +1,80 @@
 # Agent Guide: mpmc-queue
 
-**Context**: High-performance, concurrent, in-memory MPMC queue in Go.
+**Context**: High-performance, concurrent, in-memory MPMC (Multi-Producer Multi-Consumer) queue in Go.
 **Module**: `mpmc-queue` | **Go**: 1.25+
 **Dependencies**: `github.com/google/uuid` (direct)
 
 ## 🚨 Critical Mandates
-1.  **Concurrency Safety**: `Queue.mutex` > `Consumer.mutex`. NEVER hold `Consumer.mutex` while acquiring `Queue.mutex`.
-2.  **Race Detection**: ALWAYS run tests with `-race`. This is non-negotiable.
-3.  **Immutability**: `QueueData` is immutable. NEVER modify it after creation.
-4.  **Locking**: Use `RLock` for reads, `Lock` for writes. Defer `Unlock` immediately after locking.
-5.  **Memory**: Pre-validate data size with `MemoryTracker.CanAddData()` before adding to the queue.
 
-## 📂 Project Structure
--   `queue/`: Core logic (`Queue`, `Consumer`, `ChunkedList`, `MemoryTracker`).
--   `tests/`: Comprehensive test suite (unit, race, integration, stress).
--   `examples/`: Usage examples for end-users.
--   `docs/`: Architecture and design documentation.
+1.  **Concurrency Safety**:
+    *   **Lock Order**: ALWAYS acquire `Queue.mutex` BEFORE `Consumer.mutex` if both are needed. Reverse order causes deadlocks.
+    *   **Snapshots**: To avoid holding locks, copy state (e.g., `consumer.chunkElement`) under a short lock, then use the copy.
+    *   **Defer**: Immediately `defer mutex.Unlock()` (or `RUnlock()`) after locking.
+
+2.  **Race Detection**:
+    *   **MANDATORY**: Always run tests with the `-race` flag. No exceptions.
+    *   **Atomics**: Use `atomic.Int64`/`atomic.Bool` for counters/flags accessed without mutexes.
+
+3.  **Memory Management**:
+    *   **Immutability**: `QueueData` is immutable once created.
+    *   **Pre-validation**: Check memory limits (`MemoryTracker`) before adding data.
+    *   **Unsafe**: `unsafe.Sizeof` is used for accurate memory tracking; modify structs with caution.
+
+4.  **Blocking Semantics**:
+    *   **Production**: Use blocking methods (`Enqueue`, `Read`) with `context.Context` cancellation.
+    *   **Testing**: Use non-blocking methods (`TryEnqueue`, `TryRead`) to prevent test timeouts/hangs.
 
 ## 🛠 Development Workflow
 
 ### Build & Test Commands
-Use `make` for standard operations.
+
+Use `make` for standard operations. The default `make` runs `lint build test`.
 
 ```bash
-# Build
-make build          # Builds with -race flag
+# Build (includes -race)
+make build
 
-# Testing
-make test           # Run unit tests (fast, skips integration)
-make test-integration # Run stress/long-running tests (-tags=integration)
-make test-all       # Run EVERYTHING (unit + integration + race)
+# Run Unit Tests (Fast, skips integration)
+make test
 
-# Single Test Execution (Best for debugging)
-# Format: go test -v -race -run <TestName> <Path>
+# Run Integration/Stress Tests (Slower)
+make test-integration
+
+# Run ALL Tests
+make test-all
+
+# Linting & Formatting
+make lint      # Runs golangci-lint
+make fmt       # Runs go fmt
+```
+
+### Running Specific Tests
+For debugging, run individual tests with verbose output and race detection.
+
+```bash
+# Run a specific test function
 go test -v -race -run TestQueue_Enqueue ./tests/
-go test -v -race -run TestNewQueue ./tests/queue_test.go
-go test -v -race -run TestConsumer_TryRead ./tests/consumer_management_test.go
 
-# Coverage
-make coverage       # Generate and display coverage report
+# Run a specific test file
+go test -v -race ./tests/queue_test.go
+
+# Run tests matching a pattern
+go test -v -race -run "TestConsumer_.*" ./tests/
 ```
 
-### Linting & Formatting
-We use `golangci-lint` with strict settings.
-```bash
-make lint           # Run all linters
-make fmt            # Format code (go fmt)
-```
-**Style Note**: `goimports` is enforced with local prefix `mpmc-queue`.
-**Linters Enabled**: govet, errcheck, staticcheck, gosimple, ineffassign, unused, typecheck, gofmt, goimports.
+### Linting Configuration
+*   **Tool**: `golangci-lint`
+*   **Enabled**: `govet` (shadowing check enabled), `errcheck`, `staticcheck`, `gosimple`, `ineffassign`, `unused`, `typecheck`, `gofmt`, `goimports`.
+*   **Formatting**: `goimports` with `-local mpmc-queue` is enforced.
 
 ## 📏 Code Style & Conventions
 
 ### Imports
-Group imports: StdLib, External, Internal.
+Group imports into three blocks separated by newlines:
+1.  Standard Library
+2.  External Dependencies (`github.com/...`)
+3.  Internal Project Imports (`mpmc-queue/...`)
+
 ```go
 import (
     "context"
@@ -67,35 +88,32 @@ import (
 ```
 
 ### Naming
--   **Exported**: `PascalCase` (e.g., `Queue`, `Enqueue`). Must have Godoc comments explaining *behavior* and *blocking semantics*.
--   **Private**: `camelCase` (e.g., `expirationWorker`, `cleanupExpiredItems`).
--   **Interfaces**: Name with `-er` suffix if simple (e.g., `Reader`), or descriptive (e.g., `MemoryTracker`).
--   **Constants**: `PascalCase` for exported, `camelCase` for private.
+*   **Exported**: `PascalCase`. Must have Godoc comments explaining *behavior* and *blocking semantics*.
+*   **Private**: `camelCase`.
+*   **Getters**: Use `Get` prefix (e.g., `GetName`, `GetStats`) - this is a project-specific convention.
+*   **Interfaces**: `-er` suffix (e.g., `Reader`, `MemoryTracker`).
 
 ### Error Handling
--   **Custom Errors**: Use specific types like `MemoryLimitError` for logic branching.
--   **Wrapping**: Always wrap errors with context: `fmt.Errorf("initializing consumer: %w", err)`.
--   **Checking**: Use `errors.As` to check for specific error types.
+*   **Typed Errors**: Use specific types for logic branching (e.g., `&MemoryLimitError{}`, `&QueueClosedError{}`).
+*   **Wrapping**: Wrap errors to provide context: `fmt.Errorf("initializing consumer: %w", err)`.
+*   **Checks**: Use `errors.As` to check for specific error types.
 
-### Types & Memory
--   **Generics**: Use `any` instead of `interface{}`.
--   **Atomics**: Use `atomic.Int64`, `atomic.Bool` for lock-free counters/flags.
--   **Unsafe**: `unsafe.Sizeof()` is used for accurate memory estimation in `MemoryTracker`. Be cautious when modifying structs.
+### Types & Generics
+*   **Generics**: Use `any` for payload data instead of `interface{}`.
+*   **Structs**: Keep structs aligned for memory efficiency where possible.
 
 ## 🔄 Concurrency Patterns
 
-### Lock Ordering (Deadlock Prevention)
-**Golden Rule**: `Queue.mutex` > `Consumer.mutex`.
+### The "Snapshot" Pattern
+To avoid holding locks across complex operations or calling into other locked components:
 
-**Snapshot Pattern**: To avoid holding locks too long or incorrectly:
-1.  Lock Consumer.
-2.  Copy necessary state (e.g., current index).
-3.  Unlock Consumer.
-4.  Lock Queue.
-5.  Perform operation.
+1.  Lock the component (e.g., Consumer).
+2.  Copy the necessary state (e.g., current index/pointer).
+3.  Unlock the component.
+4.  Lock the parent/dependency (e.g., Queue) using the copied state.
 
 ```go
-// ✅ Correct Pattern
+// Example: Reading without holding Consumer lock while accessing Queue
 c.mutex.Lock()
 pos := c.chunkElement
 c.mutex.Unlock()
@@ -105,19 +123,28 @@ defer c.queue.mutex.RUnlock()
 // ... safely access queue using pos ...
 ```
 
-### Blocking vs Non-Blocking
--   **Blocking** (`Enqueue`, `Read`): Use `select` with `stopChan` and `context.Done()`. Used in production.
--   **Non-Blocking** (`TryEnqueue`, `TryRead`): Return immediately with success/fail/nil. **MANDATORY for tests** to prevent test timeouts.
+### Notification Channels
+*   **Non-Blocking Sends**: Never block on notification channels (`enqueueNotify`, etc.). Use `select` with `default`.
+
+```go
+select {
+case c.notifyChan <- struct{}{}:
+    // Notified
+default:
+    // Channel full, skip (receiver already has a pending signal)
+}
+```
 
 ## 🧪 Testing Standards
 
-1.  **Isolation**: Create a new `Queue` for every test.
-2.  **Cleanup**: Always `defer q.Close()`.
-3.  **Parallelism**: Use `t.Parallel()` where appropriate, but be careful with shared resources (though `Queue` instances should be isolated).
-4.  **WaitGroups**: Use `sync.WaitGroup` for testing concurrent producers/consumers.
-5.  **Atomics**: Use `atomic.Int64` for counters shared across goroutines in tests.
+1.  **Isolation**: Create a `NewQueue` for EVERY test case. Do not share queues.
+2.  **Cleanup**: Always `defer q.Close()` immediately after creation.
+3.  **Parallelism**: Use `t.Parallel()` where appropriate.
+4.  **WaitGroups**: Use `sync.WaitGroup` to synchronize concurrent producers/consumers.
+5.  **Assertions**: Fail fast with `t.Fatalf` for setup/critical errors; use `t.Errorf` for logic checks.
 
 ### Example Test Template
+
 ```go
 func TestConcurrency_Safe(t *testing.T) {
     q := queue.NewQueue("test-queue")
@@ -138,8 +165,8 @@ func TestConcurrency_Safe(t *testing.T) {
     go func() {
         defer wg.Done()
         c := q.AddConsumer()
-        // Spin/Wait for data (simplified)
-        for i := 0; i < 10; i++ {
+        // Spin/Wait for data
+        for i := 0; i < 100; i++ {
             if val := c.TryRead(); val != nil {
                 return
             }
@@ -153,6 +180,8 @@ func TestConcurrency_Safe(t *testing.T) {
 ```
 
 ## ⚠️ Common Pitfalls
--   **Nil Checks**: `chunkElement` can be nil if the queue is empty or consumer is new. Always check before dereferencing.
--   **Context Propagation**: Always respect `ctx.Done()` in blocking operations.
--   **Channel Blocking**: Never send to `notify` channels without a `select` with `default:` case, or you risk deadlocking the system if channels are full.
+
+*   **Nil Pointers**: `chunkElement` can be nil if the queue is empty. Always check before dereferencing.
+*   **Context**: Respect `ctx.Done()` in all blocking loops.
+*   **Memory Leaks**: Ensure `Close()` is called to stop background workers (`expirationWorker`).
+*   **Deadlocks**: Never acquire `Consumer` lock *inside* a `Queue` lock critical section if the `Queue` lock was acquired *after* a `Consumer` lock elsewhere.
