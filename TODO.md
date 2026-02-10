@@ -4,6 +4,13 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 
 ## Priority 0 - Critical Issues
 
+### Fix Unbounded Memory Growth in Consumer
+- **Status**: 🚧 In Progress
+- **Problem**: `dequeueHistory` grows indefinitely for every item read
+- **Impact**: OOM crashes for long-running consumers
+- **Plan**: Implement rolling window/cap (default 1000 items)
+- **Files**: `queue/consumer.go`, `tests/consumer_info_test.go`
+
 ### Fix Race Condition in AddEvent
 - **Status**: ✅ Completed (commit: 144bf05)
 - **Problem**: Tests crash with `SIGSEGV` during race detection
@@ -26,6 +33,12 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 - **Files**: `queue/memory.go`, `queue/data.go`
 
 ## Priority 1 - High Priority
+
+### Optimize Memory Reflection (Hot Path)
+- **Status**: ⚠️ Not Started
+- **Problem**: `reflect.ValueOf` used on every Enqueue
+- **Solution**: Add `Sizeable` interface to bypass reflection
+- **Files**: `queue/memory.go`, `queue/data.go`
 
 ### Use Modern Go Idioms
 - **Status**: ✅ Completed (commit: 512208d)
@@ -255,6 +268,12 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 ---
 
 ## Priority 4 - Quality & Testing Improvements
+
+### Verify Memory Usage Accuracy
+- **Status**: ⚠️ Not Started
+- **Problem**: No tests for exact byte-count correctness
+- **Solution**: Add unit tests with known payload sizes
+- **Files**: `tests/memory_accuracy_test.go`
 
 ### Improve Test Coverage
 - **Status**: ✅ Completed (2025-12-27)
