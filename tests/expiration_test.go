@@ -271,15 +271,13 @@ func TestLongRunningExpiration(t *testing.T) {
 		t.Skip("Skipping long-running test")
 	}
 
-	// Save original interval and restore after test
-	originalInterval := queue.ExpirationCheckInterval
-	queue.ExpirationCheckInterval = 100 * time.Millisecond
-	defer func() {
-		queue.ExpirationCheckInterval = originalInterval
-	}()
-
-	// Create queue with 1-second TTL
-	q := queue.NewQueueWithTTL("test-queue", 1*time.Second)
+	// Create queue with 1-second TTL and 100ms check interval
+	q := queue.NewQueueWithConfig("test-queue", queue.QueueConfig{
+		TTL:                     1 * time.Second,
+		ExpirationCheckInterval: 100 * time.Millisecond,
+		MaxMemory:               queue.MaxQueueMemory,
+		MaxConsumerHistory:      queue.DefaultMaxConsumerHistory,
+	})
 	defer q.Close()
 
 	// Continuously add items while some expire

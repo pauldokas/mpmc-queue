@@ -13,8 +13,12 @@ var (
 	// DefaultTTL is the default time-to-live for queue items (10 minutes)
 	DefaultTTL = 10 * time.Minute
 
+	// DefaultExpirationCheckInterval is the default interval for checking expired items
+	DefaultExpirationCheckInterval = 30 * time.Second
+
 	// ExpirationCheckInterval is how often to check for expired items
-	ExpirationCheckInterval = 30 * time.Second
+	// Deprecated: Use QueueConfig.ExpirationCheckInterval instead
+	ExpirationCheckInterval = DefaultExpirationCheckInterval
 
 	// ChunkSize is the number of items per chunk
 	ChunkSize = 1000
@@ -25,44 +29,48 @@ var (
 
 // Queue represents a multi-producer, multi-consumer queue
 type Queue struct {
-	name               string
-	data               *ChunkedList
-	consumers          *ConsumerManager
-	mutex              sync.RWMutex
-	memoryTracker      *MemoryTracker
-	ttl                time.Duration
-	stopChan           chan struct{}
-	wg                 sync.WaitGroup
-	expirationEnabled  bool
-	createdAt          time.Time
-	enqueueNotify      chan struct{} // Notifies consumers when data is enqueued
-	dequeueNotify      chan struct{} // Notifies producers when data is consumed/expired
-	closed             atomic.Bool   // Tracks if queue is closed
-	maxConsumerHistory int           // Maximum history records per consumer
+	name                    string
+	data                    *ChunkedList
+	consumers               *ConsumerManager
+	mutex                   sync.RWMutex
+	memoryTracker           *MemoryTracker
+	ttl                     time.Duration
+	stopChan                chan struct{}
+	wg                      sync.WaitGroup
+	expirationEnabled       bool
+	createdAt               time.Time
+	enqueueNotify           chan struct{} // Notifies consumers when data is enqueued
+	dequeueNotify           chan struct{} // Notifies producers when data is consumed/expired
+	closed                  atomic.Bool   // Tracks if queue is closed
+	maxConsumerHistory      int           // Maximum history records per consumer
+	expirationCheckInterval time.Duration
 }
 
 // QueueConfig holds configuration for the queue
 type QueueConfig struct {
-	TTL                time.Duration
-	MaxMemory          int64
-	MaxConsumerHistory int
+	TTL                     time.Duration
+	MaxMemory               int64
+	MaxConsumerHistory      int
+	ExpirationCheckInterval time.Duration
 }
 
 // NewQueue creates a new queue with the specified name and default TTL
 func NewQueue(name string) *Queue {
 	return NewQueueWithConfig(name, QueueConfig{
-		TTL:                DefaultTTL,
-		MaxMemory:          MaxQueueMemory,
-		MaxConsumerHistory: DefaultMaxConsumerHistory,
+		TTL:                     DefaultTTL,
+		MaxMemory:               MaxQueueMemory,
+		MaxConsumerHistory:      DefaultMaxConsumerHistory,
+		ExpirationCheckInterval: DefaultExpirationCheckInterval,
 	})
 }
 
 // NewQueueWithTTL creates a new queue with a custom TTL
 func NewQueueWithTTL(name string, ttl time.Duration) *Queue {
 	return NewQueueWithConfig(name, QueueConfig{
-		TTL:                ttl,
-		MaxMemory:          MaxQueueMemory,
-		MaxConsumerHistory: DefaultMaxConsumerHistory,
+		TTL:                     ttl,
+		MaxMemory:               MaxQueueMemory,
+		MaxConsumerHistory:      DefaultMaxConsumerHistory,
+		ExpirationCheckInterval: DefaultExpirationCheckInterval,
 	})
 }
 
@@ -70,17 +78,24 @@ func NewQueueWithTTL(name string, ttl time.Duration) *Queue {
 func NewQueueWithConfig(name string, config QueueConfig) *Queue {
 	memoryTracker := NewMemoryTracker(config.MaxMemory)
 
+	// Use default if interval is not specified
+	interval := config.ExpirationCheckInterval
+	if interval <= 0 {
+		interval = DefaultExpirationCheckInterval
+	}
+
 	queue := &Queue{
-		name:               name,
-		data:               NewChunkedList(memoryTracker),
-		memoryTracker:      memoryTracker,
-		ttl:                config.TTL,
-		stopChan:           make(chan struct{}),
-		expirationEnabled:  true,
-		createdAt:          time.Now(),
-		enqueueNotify:      make(chan struct{}, 100), // Large buffer for multiple waiters
-		dequeueNotify:      make(chan struct{}, 100), // Large buffer for multiple waiters
-		maxConsumerHistory: config.MaxConsumerHistory,
+		name:                    name,
+		data:                    NewChunkedList(memoryTracker),
+		memoryTracker:           memoryTracker,
+		ttl:                     config.TTL,
+		stopChan:                make(chan struct{}),
+		expirationEnabled:       true,
+		createdAt:               time.Now(),
+		enqueueNotify:           make(chan struct{}, 100), // Large buffer for multiple waiters
+		dequeueNotify:           make(chan struct{}, 100), // Large buffer for multiple waiters
+		maxConsumerHistory:      config.MaxConsumerHistory,
+		expirationCheckInterval: interval,
 	}
 
 	queue.consumers = NewConsumerManager(queue)
@@ -573,7 +588,7 @@ func (q *Queue) CloseWithContext(ctx context.Context) error {
 func (q *Queue) expirationWorker() {
 	defer q.wg.Done()
 
-	ticker := time.NewTicker(ExpirationCheckInterval)
+	ticker := time.NewTicker(q.expirationCheckInterval)
 	defer ticker.Stop()
 
 	for {
