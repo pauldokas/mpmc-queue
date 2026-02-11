@@ -964,6 +964,28 @@ consumer.Close()
 
 ## Data Types
 
+### Sizeable
+
+Interface that allows structs to report their own size, bypassing reflection for better performance.
+
+**Interface Definition:**
+```go
+type Sizeable interface {
+    Size() int
+}
+```
+
+**Example:**
+```go
+type MyData struct {
+    Value string
+}
+
+func (d MyData) Size() int {
+    return len(d.Value) + 16 // Estimate size including struct overhead
+}
+```
+
 ### QueueData
 
 Represents a single item in the queue. Immutable after creation.

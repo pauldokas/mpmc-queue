@@ -146,7 +146,7 @@ Consumer 3:  Chunk A[0] ─┘
 **Features:**
 - UUID-based identification
 - Independent position tracking
-- Local dequeue history
+- Local dequeue history (rolling window, configurable size)
 - Notification channel for expirations
 
 ---
@@ -617,7 +617,7 @@ q.mutex.RUnlock()
 
 **Trade-off:**
 - ❌ Can't track which consumers read an item
-- ✅ Solution: Each consumer tracks its own history
+- ✅ Solution: Each consumer tracks its own history (rolling window to prevent memory leaks)
 
 ---
 
