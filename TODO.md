@@ -2,14 +2,20 @@
 
 This document tracks improvements, enhancements, and issues for the mpmc-queue project.
 
+### Make ExpirationCheckInterval Configurable
+- **Status**: ✅ Completed
+- **Problem**: Global variable hard to test/tune
+- **Solution**: Moved to `QueueConfig`
+- **Files**: `queue/queue.go`
+
 ## Priority 0 - Critical Issues
 
 ### Fix Unbounded Memory Growth in Consumer
-- **Status**: 🚧 In Progress
+- **Status**: ✅ Completed
 - **Problem**: `dequeueHistory` grows indefinitely for every item read
 - **Impact**: OOM crashes for long-running consumers
-- **Plan**: Implement rolling window/cap (default 1000 items)
-- **Files**: `queue/consumer.go`, `tests/consumer_info_test.go`
+- **Solution**: Implemented rolling window/cap (default 1000 items)
+- **Files**: `queue/consumer.go`, `tests/consumer_history_test.go`
 
 ### Fix Race Condition in AddEvent
 - **Status**: ✅ Completed (commit: 144bf05)
@@ -35,10 +41,10 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 ## Priority 1 - High Priority
 
 ### Optimize Memory Reflection (Hot Path)
-- **Status**: ⚠️ Not Started
+- **Status**: ✅ Completed
 - **Problem**: `reflect.ValueOf` used on every Enqueue
-- **Solution**: Add `Sizeable` interface to bypass reflection
-- **Files**: `queue/memory.go`, `queue/data.go`
+- **Solution**: Added `Sizeable` interface to bypass reflection
+- **Files**: `queue/memory.go`, `tests/memory_optimization_benchmark_test.go`
 
 ### Use Modern Go Idioms
 - **Status**: ✅ Completed (commit: 512208d)
@@ -111,6 +117,12 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
   }
   ```
 - **Files**: `queue/queue.go`, `queue/memory.go`, `tests/config_test.go`
+
+### Make Expiration Check Interval Configurable
+- **Status**: ✅ Completed (2026-02-11)
+- **Problem**: `ExpirationCheckInterval` was a global variable
+- **Solution**: Moved to `QueueConfig` for per-queue configuration
+- **Files**: `queue/queue.go`, `tests/expiration_test.go`, `docs/API.md`
 
 ### Optimize Memory Estimation with Caching
 - **Status**: ✅ Completed (2025-12-27)
@@ -270,10 +282,10 @@ This document tracks improvements, enhancements, and issues for the mpmc-queue p
 ## Priority 4 - Quality & Testing Improvements
 
 ### Verify Memory Usage Accuracy
-- **Status**: ⚠️ Not Started
+- **Status**: ✅ Completed
 - **Problem**: No tests for exact byte-count correctness
-- **Solution**: Add unit tests with known payload sizes
-- **Files**: `tests/memory_accuracy_test.go`
+- **Solution**: Added unit tests with known payload sizes
+- **Files**: `tests/memory_accuracy_test.go`, `tests/lifecycle_test.go`
 
 ### Improve Test Coverage
 - **Status**: ✅ Completed (2025-12-27)
