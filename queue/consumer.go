@@ -27,12 +27,18 @@ type Consumer struct {
 	lastReadTime   time.Time       // For tracking consumer activity
 	totalItemsRead atomic.Int64    // Total items this consumer has read
 	dequeueHistory []DequeueRecord // Track dequeue events locally
+	maxHistory     int             // Maximum history records to keep
 	closed         atomic.Bool     // Tracks if consumer is closed
 	group          *ConsumerGroup  // Reference to parent group (nil if independent)
 }
 
 // NewConsumer creates a new consumer
 func NewConsumer(queue *Queue) *Consumer {
+	maxHistory := DefaultMaxConsumerHistory
+	if queue != nil {
+		maxHistory = queue.maxConsumerHistory
+	}
+
 	return &Consumer{
 		id:             uuid.New().String(),
 		chunkElement:   nil, // Will be set when first item is read
@@ -41,7 +47,20 @@ func NewConsumer(queue *Queue) *Consumer {
 		queue:          queue,
 		lastReadTime:   time.Now(),
 		dequeueHistory: make([]DequeueRecord, 0, 100), // Pre-allocate some capacity
+		maxHistory:     maxHistory,
 		group:          nil,
+	}
+}
+
+func (c *Consumer) addToHistoryUnsafe(dataID string) {
+	c.dequeueHistory = append(c.dequeueHistory, DequeueRecord{
+		DataID:    dataID,
+		Timestamp: time.Now(),
+	})
+
+	if len(c.dequeueHistory) > c.maxHistory {
+		excess := len(c.dequeueHistory) - c.maxHistory
+		c.dequeueHistory = c.dequeueHistory[excess:]
 	}
 }
 
@@ -89,10 +108,7 @@ func (c *Consumer) TryRead() *QueueData {
 		data := c.group.TryRead()
 		if data != nil {
 			c.mutex.Lock()
-			c.dequeueHistory = append(c.dequeueHistory, DequeueRecord{
-				DataID:    data.ID,
-				Timestamp: time.Now(),
-			})
+			c.addToHistoryUnsafe(data.ID)
 			c.lastReadTime = time.Now()
 			c.totalItemsRead.Add(1)
 			c.mutex.Unlock()
@@ -151,10 +167,7 @@ func (c *Consumer) TryRead() *QueueData {
 				c.mutex.Lock()
 				// Double-check position hasn't changed (expiration could have updated it)
 				if c.chunkElement == currentElement && c.indexInChunk == currentIndex {
-					c.dequeueHistory = append(c.dequeueHistory, DequeueRecord{
-						DataID:    data.ID,
-						Timestamp: time.Now(),
-					})
+					c.addToHistoryUnsafe(data.ID)
 					c.indexInChunk++
 					c.lastReadTime = time.Now()
 					c.totalItemsRead.Add(1)
@@ -539,10 +552,7 @@ func (c *Consumer) TryReadWhere(predicate func(*QueueData) bool) *QueueData {
 		data := c.group.TryReadWhere(predicate)
 		if data != nil {
 			c.mutex.Lock()
-			c.dequeueHistory = append(c.dequeueHistory, DequeueRecord{
-				DataID:    data.ID,
-				Timestamp: time.Now(),
-			})
+			c.addToHistoryUnsafe(data.ID)
 			c.lastReadTime = time.Now()
 			c.totalItemsRead.Add(1)
 			c.mutex.Unlock()
