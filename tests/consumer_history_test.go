@@ -64,8 +64,13 @@ func TestConsumerHistoryLimit_Rolling(t *testing.T) {
 	// Enqueue and read items one by one
 	for i := 0; i < 20; i++ {
 		payload := fmt.Sprintf("data-%d", i)
-		q.TryEnqueue(payload)
+		if err := q.TryEnqueue(payload); err != nil {
+			t.Fatalf("Failed to enqueue item %d: %v", i, err)
+		}
 		data := consumer.TryRead()
+		if data == nil {
+			t.Fatalf("Failed to read item %d", i)
+		}
 
 		history := consumer.GetDequeueHistory()
 		if len(history) > limit {
