@@ -72,10 +72,13 @@ defer q.Close()
  
  **QueueConfig:**
  ```go
- type QueueConfig struct {
-     TTL       time.Duration // Time-to-live for items
-     MaxMemory int64         // Maximum memory in bytes
- }
+  type QueueConfig struct {
+      TTL                     time.Duration // Time-to-live for items
+      MaxMemory               int64         // Maximum memory in bytes
+      MaxConsumerHistory      int           // Maximum history records per consumer
+      ExpirationCheckInterval time.Duration // How often to check for expired items
+  }
+
  ```
  
  **Example:**
@@ -1164,7 +1167,16 @@ const DefaultTTL = 10 * time.Minute
 How often the background worker checks for expired items.
 
 ```go
+// Deprecated: Use QueueConfig.ExpirationCheckInterval instead
 const ExpirationCheckInterval = 30 * time.Second
+```
+
+### DefaultExpirationCheckInterval
+
+Default interval for checking expired items.
+
+```go
+const DefaultExpirationCheckInterval = 30 * time.Second
 ```
 
 ---

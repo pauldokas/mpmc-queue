@@ -482,10 +482,11 @@ go run observability/metrics_example.go
 // Custom TTL
 q := queue.NewQueueWithTTL("fast-expire", 30*time.Second)
 
-// Custom memory limit
+// Custom memory limit and check interval
 q := queue.NewQueueWithConfig("big-queue", queue.QueueConfig{
-    TTL:       10 * time.Minute,
-    MaxMemory: 10 * 1024 * 1024, // 10MB
+    TTL:                     10 * time.Minute,
+    MaxMemory:               10 * 1024 * 1024, // 10MB
+    ExpirationCheckInterval: 1 * time.Minute,
 })
 
 // Disable expiration

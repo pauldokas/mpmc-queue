@@ -519,8 +519,8 @@ if qErr, ok := err.(*queue.QueueError); ok {
 - **Behavior**: When full, `Enqueue` blocks indefinitely and `TryEnqueue` returns an error immediately.
 
 ### Time-To-Live (TTL)
-- **Granularity**: Expiration is checked by a background worker every 30 seconds (`ExpirationCheckInterval`).
-- **Precision**: An item may remain in the queue for up to 30 seconds *after* its TTL has expired before being removed.
+- **Granularity**: Expiration is checked by a background worker per queue (default 30 seconds, configurable via `QueueConfig.ExpirationCheckInterval`).
+- **Precision**: An item may remain in the queue for up to the check interval *after* its TTL has expired before being removed.
 
 ### Immutability
 - **QueueData**: Once created, `QueueData` and its payload are immutable. This ensures thread safety without complex locking but requires creating new items for updates.
