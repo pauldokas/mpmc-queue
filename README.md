@@ -242,7 +242,7 @@ for _, cs := range consumerStats {
 #### Creation
 - `NewQueue(name string) *Queue` - Create queue with default settings
 - `NewQueueWithTTL(name, ttl) *Queue` - Create queue with custom TTL
-- `NewQueueWithConfig(name, config) *Queue` - Create queue with custom config (TTL, MaxMemory)
+- `NewQueueWithConfig(name, config) *Queue` - Create queue with custom config (TTL, MaxMemory, MaxConsumerHistory, ExpirationCheckInterval)
 
 #### Data Operations (Blocking)
 - `Enqueue(payload any) error` - Add single item (blocks if queue full)
@@ -349,6 +349,21 @@ type ConsumerStats struct {
 - **Thread Safety**: Full concurrent access support
 - **Lock Granularity**: Optimized read/write locks
 - **Scalability**: Efficient with many producers/consumers
+
+## Performance Optimization
+
+### Sizeable Interface
+For high-performance applications, you can implement the `Sizeable` interface on your payload structs. This allows the queue to bypass reflection-based memory estimation, significantly reducing CPU overhead during enqueue operations.
+
+```go
+type MyData struct {
+    Value string
+}
+
+func (d MyData) Size() int {
+    return len(d.Value) + 16 // Estimate size including struct overhead
+}
+```
 
 ### Time Complexity
 - **Enqueue/TryEnqueue**: O(1) amortized
@@ -525,9 +540,8 @@ if qErr, ok := err.(*queue.QueueError); ok {
 ### Immutability
 - **QueueData**: Once created, `QueueData` and its payload are immutable. This ensures thread safety without complex locking but requires creating new items for updates.
 
-### Resource Growth
-- **Event History**: Each `Consumer` maintains a local `dequeueHistory` slice that tracks every item read. This slice grows unbounded over the lifetime of the consumer and is not automatically pruned. Long-lived consumers reading millions of items will consume significant memory.
-- **Persistence**: The queue is in-memory only. All data is lost upon process restart.
+### Persistence
+- **In-Memory**: The queue is in-memory only. All data is lost upon process restart.
 
 See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for solutions and workarounds.
 
