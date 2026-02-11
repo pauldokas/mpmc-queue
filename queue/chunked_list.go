@@ -124,6 +124,7 @@ func (cl *ChunkedList) RemoveExpiredData(ttl time.Duration) (int, []ChunkRemoval
 		if chunk.IsEmpty() {
 			cl.list.Remove(element)
 			cl.memoryTracker.RemoveChunk()
+			PutChunkNode(chunk)
 		}
 
 		element = nextElement
@@ -150,8 +151,10 @@ func (cl *ChunkedList) IsEmpty() bool {
 func (cl *ChunkedList) Clear() {
 	for cl.list.Len() > 0 {
 		element := cl.list.Front()
+		chunk := element.Value.(*ChunkNode)
 		cl.list.Remove(element)
 		cl.memoryTracker.RemoveChunk()
+		PutChunkNode(chunk)
 	}
 	cl.totalItems.Store(0)
 }

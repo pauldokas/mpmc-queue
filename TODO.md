@@ -374,31 +374,24 @@ For long-term strategic goals, see the **[Roadmap](docs/ROADMAP.md)**.
 - **Files**: `queue/memory.go`
 
 ### Add Benchmarking CI/CD Integration
-- **Status**: ⚠️ Not Started
+- **Status**: ✅ Completed (2026-02-11)
 - **Task**: Automated performance regression detection
 - **Features**:
   - Run benchmarks on every PR
-  - Compare performance against baseline
-  - Track performance trends over time
+  - Compare performance against base branch
   - Alert on significant regressions (>10% slower)
   - Generate performance comparison reports
 - **Impact**: Prevents performance regressions, tracks improvements
-- **Files**: `.github/workflows/benchmark.yml`, `scripts/compare-benchmarks.sh`
+- **Files**: `.github/workflows/benchmark.yml`, `scripts/compare-benchmarks.go`, `scripts/run-benchmarks.sh`
 
 ### Add Memory Pooling for QueueData
-- **Status**: ⚠️ Not Started
-- **Task**: Use `sync.Pool` to reduce allocations
+- **Status**: ✅ Completed (2026-02-11)
+- **Task**: Use `sync.Pool` to reuse `ChunkNode` (8KB arrays)
 - **Optimization**:
-  - Pool QueueData objects for reuse
-  - Pool common payload types if possible
-  - Reduce GC pressure in high-throughput scenarios
-- **Impact**: 20-40% better performance under high load, reduced GC pauses
-- **Complexity**: Medium - need to ensure proper reset/cleanup
-- **Files**: `queue/data.go`, `queue/pool.go`
-
----
-
-## Priority 7 - Advanced Features
+  - Pool `ChunkNode` objects for reuse
+  - Reduce GC pressure by recycling large chunk allocations
+- **Impact**: Reduces steady-state allocations for queue infrastructure
+- **Files**: `queue/pool.go`, `queue/data.go`, `queue/chunked_list.go`
 
 ### Add Queue Pause/Resume
 - **Status**: ⚠️ Not Started

@@ -1,0 +1,48 @@
+name: Benchmark Comparison
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+
+jobs:
+  benchmark:
+    name: Performance Regression Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Current Branch
+        uses: actions/checkout@v4
+        with:
+          path: new
+
+      - name: Checkout Base Branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.base_ref }}
+          path: base
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Run Benchmarks on Base
+        working-directory: base
+        run: |
+          chmod +x scripts/run-benchmarks.sh
+          ./scripts/run-benchmarks.sh ../base_bench.txt
+
+      - name: Run Benchmarks on New
+        working-directory: new
+        run: |
+          chmod +x scripts/run-benchmarks.sh
+          ./scripts/run-benchmarks.sh ../new_bench.txt
+
+      - name: Compare Results
+        working-directory: new
+        run: |
+          go run scripts/compare-benchmarks.go -base ../base_bench.txt -new ../new_bench.txt -threshold 10

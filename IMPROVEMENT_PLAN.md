@@ -75,6 +75,18 @@
 
 ---
 
+## 🧹 Phase 5: Memory Pooling (Priority 4)
+
+**Problem**: High GC pressure from frequent `ChunkNode` (8KB) allocations.
+**Status**: ✅ Completed (2026-02-11)
+
+### Execution Steps
+1.  **Implementation**: Added `queue/pool.go` with `sync.Pool`.
+2.  **Integration**: Updated `ChunkedList` to `Get` and `Put` chunks.
+3.  **Validation**: Added functional test `TestChunkNodePooling`.
+
+---
+
 ## Success Criteria
 - [x] No unbounded memory growth in consumers (verified by test).
 - [x] Enqueue throughput improved by >20% for `Sizeable` payloads (verified by benchmark).

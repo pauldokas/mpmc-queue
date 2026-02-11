@@ -56,10 +56,7 @@ type ChunkNode struct {
 
 // NewChunkNode creates a new empty chunk node
 func NewChunkNode() *ChunkNode {
-	return &ChunkNode{
-		Data: [1000]*QueueData{},
-		size: 0,
-	}
+	return GetChunkNode()
 }
 
 // GetSize returns the current size using atomic load
