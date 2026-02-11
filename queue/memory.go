@@ -20,6 +20,11 @@ const (
 	ChunkNodeSize = int64(unsafe.Sizeof(ChunkNode{}))
 )
 
+// Sizeable allows structs to report their own size, bypassing reflection.
+type Sizeable interface {
+	Size() int
+}
+
 // MemoryTracker tracks memory usage for the queue
 type MemoryTracker struct {
 	totalMemory int64
@@ -108,12 +113,9 @@ func (mt *MemoryTracker) estimatePayloadSize(payload any) int64 {
 		return int64(unsafe.Sizeof(v))
 	}
 
-	// Check for Size() method (Sizer interface)
-	type Sizer interface {
-		Size() int64
-	}
-	if s, ok := payload.(Sizer); ok {
-		return s.Size()
+	// Check for Size() method (Sizeable interface)
+	if s, ok := payload.(Sizeable); ok {
+		return int64(s.Size())
 	}
 
 	v := reflect.ValueOf(payload)
