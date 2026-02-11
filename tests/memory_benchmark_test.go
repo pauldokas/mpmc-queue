@@ -20,7 +20,7 @@ func (s SizerStruct) Size() int64 {
 	return 100
 }
 
-func BenchmarkMemoryEstimation(b *testing.B) {
+func BenchmarkMemoryEstimation_Detailed(b *testing.B) {
 	mt := queue.NewMemoryTracker(1024 * 1024)
 
 	// Test cases
