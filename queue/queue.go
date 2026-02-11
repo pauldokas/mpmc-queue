@@ -100,6 +100,10 @@ func (q *Queue) GetName() string {
 // TryEnqueue attempts to add data to the queue without blocking
 // Returns an error if the queue is full (memory limit exceeded)
 func (q *Queue) TryEnqueue(payload any) error {
+	if q.closed.Load() {
+		return &QueueClosedError{Operation: "enqueue"}
+	}
+
 	data := NewQueueData(payload, q.name)
 
 	q.mutex.Lock()
@@ -115,10 +119,19 @@ func (q *Queue) TryEnqueue(payload any) error {
 // Enqueue adds data to the queue, blocking if the queue is full
 // Blocks until space becomes available (via expiration or dequeue)
 func (q *Queue) Enqueue(payload any) error {
+	if q.closed.Load() {
+		return &QueueClosedError{Operation: "enqueue"}
+	}
+
 	data := NewQueueData(payload, q.name)
 
 	for {
 		q.mutex.Lock()
+		if q.closed.Load() {
+			q.mutex.Unlock()
+			return &QueueClosedError{Operation: "enqueue"}
+		}
+
 		err := q.data.Enqueue(data)
 		if err == nil {
 			q.mutex.Unlock()
@@ -148,10 +161,19 @@ func (q *Queue) Enqueue(payload any) error {
 // EnqueueWithContext adds a single item to the queue, blocking if the queue is full
 // Blocks until space becomes available, the queue is closed, or the context is cancelled
 func (q *Queue) EnqueueWithContext(ctx context.Context, payload any) error {
+	if q.closed.Load() {
+		return &QueueClosedError{Operation: "enqueue"}
+	}
+
 	data := NewQueueData(payload, q.name)
 
 	for {
 		q.mutex.Lock()
+		if q.closed.Load() {
+			q.mutex.Unlock()
+			return &QueueClosedError{Operation: "enqueue"}
+		}
+
 		err := q.data.Enqueue(data)
 		if err == nil {
 			q.mutex.Unlock()
@@ -184,6 +206,10 @@ func (q *Queue) EnqueueWithContext(ctx context.Context, payload any) error {
 // Returns an error if any item would exceed the memory limit
 // This is an atomic operation - either all items are added or none are
 func (q *Queue) TryEnqueueBatch(payloads []any) error {
+	if q.closed.Load() {
+		return &QueueClosedError{Operation: "enqueue batch"}
+	}
+
 	if len(payloads) == 0 {
 		return nil
 	}
@@ -247,6 +273,10 @@ func (q *Queue) TryEnqueueBatch(payloads []any) error {
 // EnqueueBatch adds multiple items to the queue, blocking if the queue is full
 // This is an atomic operation - either all items are added or it blocks until space is available
 func (q *Queue) EnqueueBatch(payloads []any) error {
+	if q.closed.Load() {
+		return &QueueClosedError{Operation: "enqueue batch"}
+	}
+
 	if len(payloads) == 0 {
 		return nil
 	}
@@ -262,6 +292,10 @@ func (q *Queue) EnqueueBatch(payloads []any) error {
 
 	for {
 		q.mutex.Lock()
+		if q.closed.Load() {
+			q.mutex.Unlock()
+			return &QueueClosedError{Operation: "enqueue batch"}
+		}
 
 		// Calculate chunk overhead
 		var chunkOverhead int64
@@ -316,6 +350,10 @@ func (q *Queue) EnqueueBatch(payloads []any) error {
 // EnqueueBatchWithContext adds multiple items to the queue, blocking if the queue is full
 // Blocks until space becomes available, the queue is closed, or the context is cancelled
 func (q *Queue) EnqueueBatchWithContext(ctx context.Context, payloads []any) error {
+	if q.closed.Load() {
+		return &QueueClosedError{Operation: "enqueue batch"}
+	}
+
 	if len(payloads) == 0 {
 		return nil
 	}
@@ -338,6 +376,10 @@ func (q *Queue) EnqueueBatchWithContext(ctx context.Context, payloads []any) err
 		}
 
 		q.mutex.Lock()
+		if q.closed.Load() {
+			q.mutex.Unlock()
+			return &QueueClosedError{Operation: "enqueue batch"}
+		}
 
 		// Calculate chunk overhead
 		var chunkOverhead int64
