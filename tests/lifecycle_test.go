@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -226,15 +227,23 @@ func TestOperationsOnClosedQueue(t *testing.T) {
 	// Close queue
 	q.Close()
 
-	// Try to enqueue - should fail or return immediately
 	err := q.TryEnqueue("data")
-	// Either fails with error or returns error, both acceptable
-	_ = err
+	var qcErr *queue.QueueClosedError
+	if !errors.As(err, &qcErr) {
+		t.Errorf("Expected QueueClosedError, got %v", err)
+	} else if qcErr.Operation != "enqueue" {
+		t.Errorf("Expected operation 'enqueue', got '%s'", qcErr.Operation)
+	}
 
-	// Operations after close should complete safely (no panic)
-	// Exact behavior may vary - the important thing is safety
+	err = q.Enqueue("data")
+	if !errors.As(err, &qcErr) {
+		t.Errorf("Expected QueueClosedError, got %v", err)
+	}
+
 	data := consumer.TryRead()
-	_ = data // May be nil or not depending on timing
+	if data != nil {
+		t.Error("Expected nil data from TryRead on closed queue")
+	}
 
 	// Try to add consumer after close - should complete safely
 	newConsumer := q.AddConsumer()
@@ -244,8 +253,7 @@ func TestOperationsOnClosedQueue(t *testing.T) {
 	stats := q.GetQueueStats()
 	// Items should be 0 since Close() clears data
 	if stats.TotalItems != 0 {
-		// This is actually ok - the data was cleared
-		t.Logf("Stats after close: %d items", stats.TotalItems)
+		t.Errorf("Expected 0 items after close, got %d", stats.TotalItems)
 	}
 }
 
