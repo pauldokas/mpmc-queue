@@ -555,6 +555,41 @@ if data != nil {
 
 ---
 
+### Performance Optimization with Sizeable
+
+Implementing the `Sizeable` interface allows you to provide an explicit memory size for your payloads, bypassing the overhead of reflection.
+
+```go
+type FastData struct {
+    Payload []byte
+    Meta    map[string]string
+}
+
+// Size implements the queue.Sizeable interface
+func (f FastData) Size() int {
+    size := len(f.Payload)
+    for k, v := range f.Meta {
+        size += len(k) + len(v)
+    }
+    return size + 32 // Add overhead for struct and map
+}
+
+func main() {
+    q := queue.NewQueue("fast-queue")
+    defer q.Close()
+    
+    data := FastData{
+        Payload: []byte("high performance data"),
+        Meta:    map[string]string{"source": "sensor-1"},
+    }
+    
+    // Enqueue will use data.Size() instead of reflection
+    q.Enqueue(data)
+}
+```
+
+---
+
 ## Error Handling
 
 ### Memory Limit Errors

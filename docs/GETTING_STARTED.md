@@ -456,6 +456,24 @@ consumer.ReadWhere(func(d *queue.QueueData) bool {
 
 ---
 
+## Performance Optimization
+
+### Implementing Sizeable
+For high-throughput applications, you can implement the `Sizeable` interface on your payload structs. This allows the queue to bypass reflection-based memory estimation, significantly reducing CPU overhead.
+
+```go
+type MyData struct {
+    Value string
+}
+
+// Size returns the estimated memory size in bytes
+func (d MyData) Size() int {
+    return len(d.Value) + 16 // payload + struct overhead
+}
+```
+
+---
+
 ## Next Steps
 
 ### 1. Explore Examples
