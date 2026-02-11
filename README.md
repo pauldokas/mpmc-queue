@@ -566,6 +566,7 @@ MIT License - see LICENSE file for details.
 - **[Troubleshooting](docs/TROUBLESHOOTING.md)** - Common issues and solutions
 - **[Agent Development](AGENTS.md)** - Guide for AI coding agents
 - **[Project Plan](PROJECT_PLAN.md)** - Original design and architecture
+- **[Roadmap](docs/ROADMAP.md)** - Future improvements and enhancements
 - **[TODO](TODO.md)** - Completed work and future enhancements
 
 ## Quality Assurance

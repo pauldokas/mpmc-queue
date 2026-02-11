@@ -1,6 +1,7 @@
 # TODO - mpmc-queue Improvements
 
 This document tracks improvements, enhancements, and issues for the mpmc-queue project.
+For long-term strategic goals, see the **[Roadmap](docs/ROADMAP.md)**.
 
 ### Make ExpirationCheckInterval Configurable
 - **Status**: ✅ Completed
