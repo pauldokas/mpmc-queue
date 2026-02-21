@@ -289,16 +289,14 @@ func TestReadBatchBlocking(t *testing.T) {
 		t.Error("ReadBatch should be blocked")
 	}
 
-	// Add some items
-	if err := q.TryEnqueue("item1"); err != nil {
-		t.Fatalf("Failed to enqueue item1: %v", err)
-	}
-	if err := q.TryEnqueue("item2"); err != nil {
-		t.Fatalf("Failed to enqueue item2: %v", err)
+	// Add items atomically to avoid race condition where ReadBatch wakes up
+	// after first item and tries to read second item before it's enqueued
+	items := []any{"item1", "item2"}
+	if err := q.TryEnqueueBatch(items); err != nil {
+		t.Fatalf("Failed to enqueue batch: %v", err)
 	}
 
 	// Should unblock and return 2 items
-	time.Sleep(100 * time.Millisecond)
 	wg.Wait()
 
 	if !readCompleted.Load() {
