@@ -62,6 +62,47 @@ func (cl *ChunkedList) Enqueue(data *QueueData) error {
 	return &QueueError{Message: "Failed to add data to chunk"}
 }
 
+// EnqueueBatch adds multiple data items to the end of the list atomically
+// Memory limits must be checked by the caller beforehand.
+func (cl *ChunkedList) EnqueueBatch(dataItems []*QueueData) error {
+	if len(dataItems) == 0 {
+		return nil
+	}
+
+	for _, data := range dataItems {
+		// Get or create the last chunk
+		var lastChunk *ChunkNode
+		var lastElement *list.Element
+
+		if cl.list.Len() == 0 {
+			// Create first chunk
+			lastChunk = NewChunkNode()
+			cl.list.PushBack(lastChunk)
+			cl.memoryTracker.AddChunk()
+		} else {
+			lastElement = cl.list.Back()
+			lastChunk = lastElement.Value.(*ChunkNode)
+
+			if lastChunk.IsFull() {
+				// Create new chunk
+				lastChunk = NewChunkNode()
+				cl.list.PushBack(lastChunk)
+				cl.memoryTracker.AddChunk()
+			}
+		}
+
+		// Add data to the chunk
+		if lastChunk.Add(data) {
+			cl.memoryTracker.AddData(data)
+			cl.totalItems.Add(1)
+		} else {
+			return &QueueError{Message: "Failed to add data to chunk during batch"}
+		}
+	}
+
+	return nil
+}
+
 // GetTotalItems returns the total number of items in all chunks
 func (cl *ChunkedList) GetTotalItems() int64 {
 	return cl.totalItems.Load()
@@ -120,8 +161,11 @@ func (cl *ChunkedList) RemoveExpiredData(ttl time.Duration) (int, []ChunkRemoval
 
 		nextElement := element.Next()
 
+		// Check if chunk is empty before potentially returning it to the pool
+		isEmpty := chunk.IsEmpty()
+		
 		// Remove empty chunks
-		if chunk.IsEmpty() {
+		if isEmpty {
 			cl.list.Remove(element)
 			cl.memoryTracker.RemoveChunk()
 			PutChunkNode(chunk)
@@ -131,7 +175,7 @@ func (cl *ChunkedList) RemoveExpiredData(ttl time.Duration) (int, []ChunkRemoval
 
 		// If this chunk still has non-expired items, we can stop
 		// (since items are ordered by creation time)
-		if !chunk.IsEmpty() {
+		if !isEmpty {
 			earliestExpiry := chunk.GetEarliestExpiry()
 			if earliestExpiry != nil && time.Since(*earliestExpiry) <= ttl {
 				break

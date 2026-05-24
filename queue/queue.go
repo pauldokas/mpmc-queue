@@ -29,21 +29,26 @@ var (
 
 // Queue represents a multi-producer, multi-consumer queue
 type Queue struct {
-	name                    string
-	data                    *ChunkedList
-	consumers               *ConsumerManager
-	mutex                   sync.RWMutex
-	memoryTracker           *MemoryTracker
+	name          string
+	data          *ChunkedList
+	consumers     *ConsumerManager
+	memoryTracker *MemoryTracker
+
+	_     [64]byte // Prevent false sharing
+	mutex sync.RWMutex
+	_     [64]byte // Prevent false sharing
+
+	closed                  atomic.Bool
 	ttl                     time.Duration
 	stopChan                chan struct{}
 	wg                      sync.WaitGroup
 	expirationEnabled       bool
 	createdAt               time.Time
-	enqueueNotify           chan struct{} // Notifies consumers when data is enqueued
-	dequeueNotify           chan struct{} // Notifies producers when data is consumed/expired
-	closed                  atomic.Bool   // Tracks if queue is closed
-	maxConsumerHistory      int           // Maximum history records per consumer
+	enqueueNotify           chan struct{}
+	dequeueNotify           chan struct{}
+	maxConsumerHistory      int
 	expirationCheckInterval time.Duration
+	consumerEvictionTimeout time.Duration
 }
 
 // QueueConfig holds configuration for the queue
@@ -52,6 +57,7 @@ type QueueConfig struct {
 	MaxMemory               int64
 	MaxConsumerHistory      int
 	ExpirationCheckInterval time.Duration
+	ConsumerEvictionTimeout time.Duration
 }
 
 // NewQueue creates a new queue with the specified name and default TTL
@@ -83,6 +89,12 @@ func NewQueueWithConfig(name string, config QueueConfig) *Queue {
 	if interval <= 0 {
 		interval = DefaultExpirationCheckInterval
 	}
+	
+	if config.MaxConsumerHistory < 0 {
+		config.MaxConsumerHistory = 0
+	}
+
+	expirationEnabled := config.TTL > 0
 
 	queue := &Queue{
 		name:                    name,
@@ -90,12 +102,13 @@ func NewQueueWithConfig(name string, config QueueConfig) *Queue {
 		memoryTracker:           memoryTracker,
 		ttl:                     config.TTL,
 		stopChan:                make(chan struct{}),
-		expirationEnabled:       true,
+		expirationEnabled:       expirationEnabled,
 		createdAt:               time.Now(),
-		enqueueNotify:           make(chan struct{}, 100), // Large buffer for multiple waiters
-		dequeueNotify:           make(chan struct{}, 100), // Large buffer for multiple waiters
+		enqueueNotify:           make(chan struct{}, 100),
+		dequeueNotify:           make(chan struct{}, 100),
 		maxConsumerHistory:      config.MaxConsumerHistory,
 		expirationCheckInterval: interval,
+		consumerEvictionTimeout: config.ConsumerEvictionTimeout,
 	}
 
 	queue.consumers = NewConsumerManager(queue)
@@ -120,9 +133,14 @@ func (q *Queue) TryEnqueue(payload any) error {
 	}
 
 	data := NewQueueData(payload, q.name)
+	data.SetSize(q.memoryTracker.EstimateQueueDataSize(data))
 
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
+
+	if q.closed.Load() {
+		return &QueueClosedError{Operation: "enqueue"}
+	}
 
 	err := q.data.Enqueue(data)
 	if err == nil {
@@ -139,6 +157,7 @@ func (q *Queue) Enqueue(payload any) error {
 	}
 
 	data := NewQueueData(payload, q.name)
+	data.SetSize(q.memoryTracker.EstimateQueueDataSize(data))
 
 	for {
 		q.mutex.Lock()
@@ -181,8 +200,16 @@ func (q *Queue) EnqueueWithContext(ctx context.Context, payload any) error {
 	}
 
 	data := NewQueueData(payload, q.name)
+	data.SetSize(q.memoryTracker.EstimateQueueDataSize(data))
 
 	for {
+		// Check context first before locking
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		q.mutex.Lock()
 		if q.closed.Load() {
 			q.mutex.Unlock()
@@ -232,13 +259,19 @@ func (q *Queue) TryEnqueueBatch(payloads []any) error {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 
+	if q.closed.Load() {
+		return &QueueClosedError{Operation: "enqueue batch"}
+	}
+
 	// Create all data items upfront and calculate total size
 	dataItems := make([]*QueueData, len(payloads))
 	var totalBatchSize int64
 
 	for i, payload := range payloads {
 		dataItems[i] = NewQueueData(payload, q.name)
-		totalBatchSize += q.memoryTracker.EstimateQueueDataSize(dataItems[i])
+		size := q.memoryTracker.EstimateQueueDataSize(dataItems[i])
+		dataItems[i].SetSize(size)
+		totalBatchSize += size
 	}
 
 	// Calculate chunk overhead
@@ -273,11 +306,8 @@ func (q *Queue) TryEnqueueBatch(payloads []any) error {
 		}
 	}
 
-	// Add all items
-	for _, data := range dataItems {
-		if err := q.data.Enqueue(data); err != nil {
-			return err
-		}
+	if err := q.data.EnqueueBatch(dataItems); err != nil {
+		return err
 	}
 
 	q.notifyWaitingConsumers()
@@ -302,7 +332,9 @@ func (q *Queue) EnqueueBatch(payloads []any) error {
 
 	for i, payload := range payloads {
 		dataItems[i] = NewQueueData(payload, q.name)
-		totalBatchSize += q.memoryTracker.EstimateQueueDataSize(dataItems[i])
+		size := q.memoryTracker.EstimateQueueDataSize(dataItems[i])
+		dataItems[i].SetSize(size)
+		totalBatchSize += size
 	}
 
 	for {
@@ -337,12 +369,9 @@ func (q *Queue) EnqueueBatch(payloads []any) error {
 		}
 
 		if q.memoryTracker.GetMemoryUsage()+totalBatchSize+chunkOverhead <= q.memoryTracker.GetMaxMemory() {
-			// Add all items
-			for _, data := range dataItems {
-				if err := q.data.Enqueue(data); err != nil {
-					q.mutex.Unlock()
-					return err
-				}
+			if err := q.data.EnqueueBatch(dataItems); err != nil {
+				q.mutex.Unlock()
+				return err
 			}
 			q.mutex.Unlock()
 			q.notifyWaitingConsumers()
@@ -379,7 +408,9 @@ func (q *Queue) EnqueueBatchWithContext(ctx context.Context, payloads []any) err
 
 	for i, payload := range payloads {
 		dataItems[i] = NewQueueData(payload, q.name)
-		totalBatchSize += q.memoryTracker.EstimateQueueDataSize(dataItems[i])
+		size := q.memoryTracker.EstimateQueueDataSize(dataItems[i])
+		dataItems[i].SetSize(size)
+		totalBatchSize += size
 	}
 
 	for {
@@ -421,12 +452,9 @@ func (q *Queue) EnqueueBatchWithContext(ctx context.Context, payloads []any) err
 		}
 
 		if q.memoryTracker.GetMemoryUsage()+totalBatchSize+chunkOverhead <= q.memoryTracker.GetMaxMemory() {
-			// Add all items
-			for _, data := range dataItems {
-				if err := q.data.Enqueue(data); err != nil {
-					q.mutex.Unlock()
-					return err
-				}
+			if err := q.data.EnqueueBatch(dataItems); err != nil {
+				q.mutex.Unlock()
+				return err
 			}
 			q.mutex.Unlock()
 			q.notifyWaitingConsumers()
@@ -461,6 +489,17 @@ func (q *Queue) AddConsumerGroup(name string) *ConsumerGroup {
 // RemoveConsumer removes a consumer from the queue
 func (q *Queue) RemoveConsumer(consumerID string) bool {
 	return q.consumers.RemoveConsumer(consumerID)
+}
+
+// RemoveConsumerGroup removes a consumer group and all its consumers
+func (q *Queue) RemoveConsumerGroup(name string) bool {
+	return q.consumers.RemoveGroup(name)
+}
+
+// CleanInactiveConsumers removes independent consumers that haven't read for the given duration.
+// Returns the number of evicted consumers.
+func (q *Queue) CleanInactiveConsumers(timeout time.Duration) int {
+	return q.consumers.CleanInactive(timeout)
 }
 
 // GetConsumer returns a consumer by ID
@@ -597,6 +636,9 @@ func (q *Queue) expirationWorker() {
 			if q.expirationEnabled {
 				q.cleanupExpiredItems()
 			}
+			if q.consumerEvictionTimeout > 0 {
+				q.CleanInactiveConsumers(q.consumerEvictionTimeout)
+			}
 		case <-q.stopChan:
 			return
 		}
@@ -606,23 +648,25 @@ func (q *Queue) expirationWorker() {
 // cleanupExpiredItems removes expired items and notifies consumers
 func (q *Queue) cleanupExpiredItems() int {
 	q.mutex.Lock()
-	defer q.mutex.Unlock()
 
 	// Check if expiration is enabled
 	if !q.expirationEnabled {
+		q.mutex.Unlock()
 		return 0
 	}
 
-	// Calculate expired counts for each consumer before cleanup
-	expiredCounts := q.calculateExpiredCountsPerConsumer()
-
 	// Remove expired items
 	expiredCount, removalInfo := q.data.RemoveExpiredData(q.ttl)
+	
+	var newFirstElement *list.Element
+	if expiredCount > 0 {
+		newFirstElement = q.data.GetFirstElement()
+	}
+	
+	q.mutex.Unlock()
 
 	if expiredCount > 0 {
-		// Notify consumers about expired items
-		newFirstElement := q.data.GetFirstElement()
-		q.consumers.NotifyAllConsumersOfExpiration(expiredCounts, newFirstElement, removalInfo)
+		q.consumers.NotifyAllConsumersOfExpiration(newFirstElement, removalInfo)
 
 		// Notify ALL waiting producers that space is available
 		// Send multiple notifications to wake up multiple blocked producers
@@ -638,83 +682,6 @@ func (q *Queue) cleanupExpiredItems() int {
 	}
 
 	return expiredCount
-}
-
-// calculateExpiredCountsPerConsumer calculates how many unread items will be expired for each consumer
-// NOTE: Must be called while holding queue.mutex.Lock()
-func (q *Queue) calculateExpiredCountsPerConsumer() map[string]int {
-	expiredCounts := make(map[string]int)
-
-	consumers := q.consumers.GetAllConsumers()
-
-	for _, consumer := range consumers {
-		// Access position without locking to avoid deadlock
-		// We're already holding queue.mutex which protects the chunk structure
-		// Consumer's mutex only protects its position fields, which we read directly
-		consumer.mutex.Lock()
-		chunkElement, indexInChunk := consumer.getPositionUnsafe()
-		consumer.mutex.Unlock()
-
-		if chunkElement == nil {
-			// Consumer hasn't started reading, count all expired items
-			expiredCount := q.countExpiredItemsFromBeginning()
-			expiredCounts[consumer.GetID()] = expiredCount
-		} else {
-			// Count expired items from consumer's current position
-			expiredCount := q.countExpiredItemsFromPosition(chunkElement, indexInChunk)
-			expiredCounts[consumer.GetID()] = expiredCount
-		}
-	}
-
-	return expiredCounts
-}
-
-// countExpiredItemsFromBeginning counts expired items from the beginning of the queue
-func (q *Queue) countExpiredItemsFromBeginning() int {
-	count := 0
-	element := q.data.GetFirstElement()
-
-	for element != nil {
-		chunk := q.data.GetChunk(element)
-		chunkSize := chunk.GetSize()
-		for i := 0; i < chunkSize; i++ {
-			data := chunk.Get(i)
-			if data != nil && data.IsExpired(q.ttl) {
-				count++
-			} else {
-				return count // Items are ordered by creation time
-			}
-		}
-		element = element.Next()
-	}
-
-	return count
-}
-
-// countExpiredItemsFromPosition counts expired items from a specific position
-func (q *Queue) countExpiredItemsFromPosition(startElement *list.Element, startIndex int) int {
-	count := 0
-	element := startElement
-	index := startIndex
-
-	for element != nil {
-		chunk := q.data.GetChunk(element)
-		chunkSize := chunk.GetSize()
-
-		for i := index; i < chunkSize; i++ {
-			data := chunk.Get(i)
-			if data != nil && data.IsExpired(q.ttl) {
-				count++
-			} else {
-				return count // Items are ordered by creation time
-			}
-		}
-
-		element = element.Next()
-		index = 0 // Reset index for subsequent chunks
-	}
-
-	return count
 }
 
 // QueueStats represents queue statistics

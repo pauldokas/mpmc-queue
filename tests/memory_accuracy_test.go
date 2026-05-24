@@ -28,14 +28,12 @@ func TestMemoryAccuracy(t *testing.T) {
 	// Calculate the increase
 	increase := afterMem - initialMem
 
-	expectedIncrease := queue.BaseQueueDataSize + 1024 + 36 + int64(len("memory-accuracy-test")) + 7 + queue.BaseQueueEventSize + queue.ChunkNodeSize
+	expectedBaseIncrease := queue.BaseQueueDataSize + 1024 + int64(len("memory-accuracy-test")) + 7 + queue.BaseQueueEventSize + queue.ChunkNodeSize
 
-	if increase != expectedIncrease {
-
-		t.Errorf("Expected memory increase of %d, got %d", expectedIncrease, increase)
+	if increase < expectedBaseIncrease || increase > expectedBaseIncrease+20 {
+		t.Errorf("Expected memory increase of ~%d (with sequence ID length 1-20), got %d", expectedBaseIncrease, increase)
 		t.Logf("BaseQueueDataSize: %d", queue.BaseQueueDataSize)
 		t.Logf("Payload: 1024")
-		t.Logf("UUID: 36")
 		t.Logf("QueueName: %d", len("memory-accuracy-test"))
 		t.Logf("EventType: 7")
 		t.Logf("BaseQueueEventSize: %d", queue.BaseQueueEventSize)

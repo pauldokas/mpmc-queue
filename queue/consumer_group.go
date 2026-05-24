@@ -8,26 +8,41 @@ import (
 // ConsumerGroup represents a group of consumers that share the work of processing the queue.
 // Items are distributed among the consumers in the group.
 type ConsumerGroup struct {
-	name         string
-	queue        *Queue
-	chunkElement *list.Element // Current shared position
-	indexInChunk int           // Shared position within current chunk
-	mutex        sync.Mutex
-	consumers    []*Consumer // Track consumers in this group
+	name           string
+	queue          *Queue
+	chunkElement   *list.Element // Current shared position
+	indexInChunk   int           // Shared position within current chunk
+	notificationCh chan int      // Notification of expired items for the group
+	mutex          sync.Mutex
+	consumers      []*Consumer // Track consumers in this group
 }
 
 // NewConsumerGroup creates a new consumer group
 func NewConsumerGroup(name string, queue *Queue) *ConsumerGroup {
 	return &ConsumerGroup{
-		name:      name,
-		queue:     queue,
-		consumers: make([]*Consumer, 0),
+		name:           name,
+		queue:          queue,
+		notificationCh: make(chan int, 100),
+		consumers:      make([]*Consumer, 0),
 	}
 }
 
 // GetName returns the group name
 func (cg *ConsumerGroup) GetName() string {
 	return cg.name
+}
+
+// NotifyExpiredItems notifies the group about expired items
+func (cg *ConsumerGroup) NotifyExpiredItems(count int) {
+	cg.mutex.Lock()
+	defer cg.mutex.Unlock()
+
+	select {
+	case cg.notificationCh <- count:
+		// Notification sent successfully
+	default:
+		// Channel full, drop notification
+	}
 }
 
 // AddConsumer adds a new consumer to this group
@@ -78,22 +93,19 @@ func (cg *ConsumerGroup) TryRead() *QueueData {
 	}
 
 	for {
+		cg.queue.mutex.RLock()
+
 		cg.mutex.Lock()
 		currentElement := cg.chunkElement
 		currentIndex := cg.indexInChunk
 		cg.mutex.Unlock()
 
 		if currentElement == nil {
-			return nil
-		}
-
-		// Access chunk safely with read lock
-		cg.queue.mutex.RLock()
-		if currentElement == nil {
 			cg.queue.mutex.RUnlock()
 			return nil
 		}
 
+		// Access chunk safely with read lock
 		chunk := currentElement.Value.(*ChunkNode)
 		chunkSize := chunk.GetSize()
 
@@ -175,74 +187,56 @@ func (cg *ConsumerGroup) UpdatePositionAfterExpiration(expiredCount int, newFirs
 			cg.chunkElement = newFirstElement
 			cg.indexInChunk = 0
 		}
+	} else {
+		cg.chunkElement = nil
+		cg.indexInChunk = 0
 	}
 }
 
-// TryReadWhere attempts to read matching data for the group
-// Note: This advances the group's position, consuming non-matching items!
+// TryReadWhere is not supported for ConsumerGroups as it permanently consumes non-matching items
+// from the shared cursor, robbing other consumers of data.
 func (cg *ConsumerGroup) TryReadWhere(predicate func(*QueueData) bool) *QueueData {
-	if predicate == nil {
-		return nil
-	}
-
-	for {
-		data := cg.TryRead()
-		if data == nil {
-			return nil
-		}
-
-		if predicate(data) {
-			return data
-		}
-	}
+	// Restricting filtering logic on consumer groups to prevent data loss for other consumers.
+	return nil
 }
 
 // HasMoreData checks if the group has more data
 func (cg *ConsumerGroup) HasMoreData() bool {
+	cg.queue.mutex.RLock()
+	defer cg.queue.mutex.RUnlock()
+
 	cg.mutex.Lock()
 	chunkElement := cg.chunkElement
 	indexInChunk := cg.indexInChunk
 	cg.mutex.Unlock()
 
 	if chunkElement == nil {
-		cg.queue.mutex.RLock()
-		hasData := !cg.queue.data.IsEmpty()
-		cg.queue.mutex.RUnlock()
-		return hasData
+		return !cg.queue.data.IsEmpty()
 	}
 
-	cg.queue.mutex.RLock()
-	defer cg.queue.mutex.RUnlock()
-
-	if chunkElement == nil {
-		return false
-	}
-
+	// Check current chunk
 	chunk := chunkElement.Value.(*ChunkNode)
 	if indexInChunk < chunk.GetSize() {
 		return true
 	}
 
+	// Check if there are more chunks
 	return chunkElement.Next() != nil
 }
 
 // GetUnreadCount returns the number of unread items for the group
 func (cg *ConsumerGroup) GetUnreadCount() int64 {
+	cg.queue.mutex.RLock()
+	defer cg.queue.mutex.RUnlock()
+
 	cg.mutex.Lock()
 	chunkElement := cg.chunkElement
 	indexInChunk := cg.indexInChunk
 	cg.mutex.Unlock()
 
 	if chunkElement == nil {
-		cg.queue.mutex.RLock()
-		totalItems := cg.queue.data.GetTotalItems()
-		cg.queue.mutex.RUnlock()
-		return totalItems
+		return cg.queue.data.GetTotalItems()
 	}
 
-	cg.queue.mutex.RLock()
-	unreadCount := cg.queue.data.CountItemsFrom(chunkElement, indexInChunk)
-	cg.queue.mutex.RUnlock()
-
-	return unreadCount
+	return cg.queue.data.CountItemsFrom(chunkElement, indexInChunk)
 }

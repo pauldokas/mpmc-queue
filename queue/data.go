@@ -1,11 +1,13 @@
 package queue
 
 import (
+	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/google/uuid"
 )
+
+var dataIDSequence atomic.Uint64
 
 // QueueEvent represents an event in the queue's history
 type QueueEvent struct {
@@ -17,25 +19,55 @@ type QueueEvent struct {
 // QueueData represents a single item in the queue
 // QueueData is immutable after creation for thread-safety
 type QueueData struct {
-	ID           string     `json:"id"`            // UUID
+	ID           string     `json:"id"`            // UUID or Sequence
 	Payload      any        `json:"payload"`       // Arbitrary data
 	EnqueueEvent QueueEvent `json:"enqueue_event"` // Single enqueue event (immutable)
 	Created      time.Time  `json:"created"`       // For expiration tracking
+	size         int64
+}
+
+var queueDataPool = sync.Pool{
+	New: func() any {
+		return &QueueData{}
+	},
 }
 
 // NewQueueData creates a new QueueData instance with enqueue event
 func NewQueueData(payload any, queueName string) *QueueData {
 	now := time.Now()
-	return &QueueData{
-		ID:      uuid.New().String(),
-		Payload: payload,
-		EnqueueEvent: QueueEvent{
-			Timestamp: now,
-			QueueName: queueName,
-			EventType: "enqueue",
-		},
-		Created: now,
+	id := dataIDSequence.Add(1)
+	
+	qd := queueDataPool.Get().(*QueueData)
+	qd.ID = strconv.FormatUint(id, 10)
+	qd.Payload = payload
+	qd.EnqueueEvent.Timestamp = now
+	qd.EnqueueEvent.QueueName = queueName
+	qd.EnqueueEvent.EventType = "enqueue"
+	qd.Created = now
+	qd.size = 0
+	
+	return qd
+}
+
+// RecycleQueueData puts the QueueData back into the pool
+func RecycleQueueData(qd *QueueData) {
+	if qd == nil {
+		return
 	}
+	qd.Payload = nil // Prevent memory leaks
+	qd.EnqueueEvent.QueueName = ""
+	qd.ID = ""
+	queueDataPool.Put(qd)
+}
+
+// SetSize sets the pre-calculated size of the data
+func (qd *QueueData) SetSize(size int64) {
+	qd.size = size
+}
+
+// GetSize returns the pre-calculated size of the data
+func (qd *QueueData) GetSize() int64 {
+	return qd.size
 }
 
 // GetEnqueueEvent returns the enqueue event for this data
@@ -51,7 +83,10 @@ func (qd *QueueData) IsExpired(ttl time.Duration) bool {
 // ChunkNode represents a node in the chunked list containing up to 1000 data items
 type ChunkNode struct {
 	Data [1000]*QueueData `json:"data"`
-	size int32            // Current number of items in this chunk (use atomic operations)
+
+	_    [64]byte // Prevent false sharing
+	size int32    // Current number of items in this chunk (use atomic operations)
+	_    [64]byte // Prevent false sharing
 }
 
 // NewChunkNode creates a new empty chunk node

@@ -22,7 +22,11 @@ type Consumer struct {
 	chunkElement   *list.Element // Current chunk position
 	indexInChunk   int           // Position within current chunk
 	notificationCh chan int      // Notification of expired items
-	mutex          sync.Mutex
+
+	_     [64]byte // Prevent false sharing
+	mutex sync.Mutex
+	_     [64]byte // Prevent false sharing
+
 	queue          *Queue          // Reference to parent queue
 	lastReadTime   time.Time       // For tracking consumer activity
 	totalItemsRead atomic.Int64    // Total items this consumer has read
@@ -71,6 +75,9 @@ func (c *Consumer) GetID() string {
 
 // GetNotificationChannel returns the channel for expired item notifications
 func (c *Consumer) GetNotificationChannel() <-chan int {
+	if c.group != nil {
+		return c.group.notificationCh
+	}
 	return c.notificationCh
 }
 
@@ -138,22 +145,18 @@ func (c *Consumer) TryRead() *QueueData {
 
 	// Try to read from current position
 	for {
+		c.queue.mutex.RLock()
+		
 		c.mutex.Lock()
 		currentElement := c.chunkElement
 		currentIndex := c.indexInChunk
 		c.mutex.Unlock()
 
 		if currentElement == nil {
-			return nil
-		}
-
-		// Access chunk safely with read lock (no consumer lock held)
-		// Keep queue lock held while reading data to prevent TOCTOU issues with expiration
-		c.queue.mutex.RLock()
-		if currentElement == nil {
 			c.queue.mutex.RUnlock()
 			return nil
 		}
+
 		chunk := currentElement.Value.(*ChunkNode)
 		chunkSize := chunk.GetSize()
 
@@ -264,7 +267,11 @@ func (c *Consumer) TryReadBatch(limit int) []*QueueData {
 		return nil
 	}
 
-	batch := make([]*QueueData, 0, limit)
+	cap := limit
+	if cap > 1024 {
+		cap = 1024
+	}
+	batch := make([]*QueueData, 0, cap)
 
 	for len(batch) < limit {
 		data := c.TryRead()
@@ -284,7 +291,11 @@ func (c *Consumer) ReadBatch(limit int) []*QueueData {
 		return nil
 	}
 
-	batch := make([]*QueueData, 0, limit)
+	cap := limit
+	if cap > 1024 {
+		cap = 1024
+	}
+	batch := make([]*QueueData, 0, cap)
 
 	// Block until at least one item is available
 	firstItem := c.Read()
@@ -312,7 +323,11 @@ func (c *Consumer) ReadBatchWithContext(ctx context.Context, limit int) ([]*Queu
 		return nil, nil
 	}
 
-	batch := make([]*QueueData, 0, limit)
+	cap := limit
+	if cap > 1024 {
+		cap = 1024
+	}
+	batch := make([]*QueueData, 0, cap)
 
 	// Block until at least one item is available or context cancelled
 	firstItem, err := c.ReadWithContext(ctx)
@@ -353,25 +368,17 @@ func (c *Consumer) HasMoreData() bool {
 		return c.group.HasMoreData()
 	}
 
-	// Read position without holding lock to avoid lock ordering issues
+	// Need to hold queue lock to safely access list structure
+	c.queue.mutex.RLock()
+	defer c.queue.mutex.RUnlock()
+
 	c.mutex.Lock()
 	chunkElement := c.chunkElement
 	indexInChunk := c.indexInChunk
 	c.mutex.Unlock()
 
 	if chunkElement == nil {
-		c.queue.mutex.RLock()
-		hasData := !c.queue.data.IsEmpty()
-		c.queue.mutex.RUnlock()
-		return hasData
-	}
-
-	// Need to hold queue lock to safely access list structure
-	c.queue.mutex.RLock()
-	defer c.queue.mutex.RUnlock()
-
-	if chunkElement == nil {
-		return false
+		return !c.queue.data.IsEmpty()
 	}
 
 	// Check current chunk
@@ -390,24 +397,19 @@ func (c *Consumer) GetUnreadCount() int64 {
 		return c.group.GetUnreadCount()
 	}
 
-	// Read position without holding lock to avoid lock ordering issues
+	c.queue.mutex.RLock()
+	defer c.queue.mutex.RUnlock()
+
 	c.mutex.Lock()
 	chunkElement := c.chunkElement
 	indexInChunk := c.indexInChunk
 	c.mutex.Unlock()
 
 	if chunkElement == nil {
-		c.queue.mutex.RLock()
-		totalItems := c.queue.data.GetTotalItems()
-		c.queue.mutex.RUnlock()
-		return totalItems
+		return c.queue.data.GetTotalItems()
 	}
 
-	c.queue.mutex.RLock()
-	unreadCount := c.queue.data.CountItemsFrom(chunkElement, indexInChunk)
-	c.queue.mutex.RUnlock()
-
-	return unreadCount
+	return c.queue.data.CountItemsFrom(chunkElement, indexInChunk)
 }
 
 // GetStats returns consumer statistics
@@ -427,7 +429,9 @@ func (c *Consumer) GetStats() ConsumerStats {
 		}
 	}
 
-	// Read consumer state without holding lock to avoid lock ordering issues
+	c.queue.mutex.RLock()
+	defer c.queue.mutex.RUnlock()
+
 	c.mutex.Lock()
 	id := c.id
 	totalItemsRead := c.totalItemsRead.Load()
@@ -439,13 +443,9 @@ func (c *Consumer) GetStats() ConsumerStats {
 	// Calculate unread count
 	var unreadCount int64
 	if chunkElement == nil {
-		c.queue.mutex.RLock()
 		unreadCount = c.queue.data.GetTotalItems()
-		c.queue.mutex.RUnlock()
 	} else {
-		c.queue.mutex.RLock()
 		unreadCount = c.queue.data.CountItemsFrom(chunkElement, indexInChunk)
-		c.queue.mutex.RUnlock()
 	}
 
 	return ConsumerStats{
@@ -469,6 +469,13 @@ func (c *Consumer) GetDequeueHistory() []DequeueRecord {
 
 // NotifyExpiredItems notifies the consumer about expired items
 func (c *Consumer) NotifyExpiredItems(count int) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	if c.closed.Load() {
+		return
+	}
+
 	select {
 	case c.notificationCh <- count:
 		// Notification sent successfully
@@ -530,12 +537,18 @@ func (c *Consumer) UpdatePositionAfterExpiration(expiredCount int, newFirstEleme
 			c.chunkElement = newFirstElement
 			c.indexInChunk = 0
 		}
+	} else {
+		c.chunkElement = nil
+		c.indexInChunk = 0
 	}
 }
 
 // Close closes the consumer and cleans up resources
 // Safe to call multiple times (idempotent)
 func (c *Consumer) Close() {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
 	// Only close once
 	if !c.closed.CompareAndSwap(false, true) {
 		return // Already closed
@@ -549,15 +562,9 @@ func (c *Consumer) Close() {
 // Note: This advances the consumer position as it searches, consuming non-matching items
 func (c *Consumer) TryReadWhere(predicate func(*QueueData) bool) *QueueData {
 	if c.group != nil {
-		data := c.group.TryReadWhere(predicate)
-		if data != nil {
-			c.mutex.Lock()
-			c.addToHistoryUnsafe(data.ID)
-			c.lastReadTime = time.Now()
-			c.totalItemsRead.Add(1)
-			c.mutex.Unlock()
-		}
-		return data
+		// Filtering is restricted for ConsumerGroups to prevent destructive consumption
+		// of non-matching items from the shared cursor.
+		return nil
 	}
 
 	if predicate == nil {
@@ -589,6 +596,11 @@ func (c *Consumer) ReadWhere(predicate func(*QueueData) bool) *QueueData {
 		return nil
 	}
 
+	if c.group != nil {
+		// Filtering is restricted for ConsumerGroups
+		return nil
+	}
+
 	for {
 		data := c.TryReadWhere(predicate)
 		if data != nil {
@@ -612,6 +624,11 @@ func (c *Consumer) ReadWhere(predicate func(*QueueData) bool) *QueueData {
 // The predicate function should return true for items that should be returned
 func (c *Consumer) ReadWhereWithContext(ctx context.Context, predicate func(*QueueData) bool) (*QueueData, error) {
 	if predicate == nil {
+		return nil, nil
+	}
+
+	if c.group != nil {
+		// Filtering is restricted for ConsumerGroups
 		return nil, nil
 	}
 
@@ -689,15 +706,17 @@ func (cm *ConsumerManager) AddConsumerToGroup(group *ConsumerGroup) *Consumer {
 // AddConsumer adds a new consumer to the queue
 // New consumers start reading from the beginning of the queue
 func (cm *ConsumerManager) AddConsumer() *Consumer {
+	// Acquire Queue.mutex BEFORE ConsumerManager.mutex to prevent deadlocks
+	cm.queue.mutex.RLock()
+	defer cm.queue.mutex.RUnlock()
+
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
 
 	consumer := NewConsumer(cm.queue)
 
 	// Initialize consumer to read from the beginning
-	cm.queue.mutex.RLock()
 	firstElement := cm.queue.data.GetFirstElement()
-	cm.queue.mutex.RUnlock()
 
 	if firstElement != nil {
 		consumer.SetPosition(firstElement, 0)
@@ -721,6 +740,57 @@ func (cm *ConsumerManager) AddGroup(name string) *ConsumerGroup {
 	group := NewConsumerGroup(name, cm.queue)
 	cm.groups[name] = group
 	return group
+}
+
+// RemoveGroup removes a consumer group and all its associated consumers
+func (cm *ConsumerManager) RemoveGroup(name string) bool {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+
+	group, exists := cm.groups[name]
+	if !exists {
+		return false
+	}
+
+	for id, c := range cm.consumers {
+		if c.group == group {
+			c.Close()
+			delete(cm.consumers, id)
+		}
+	}
+
+	delete(cm.groups, name)
+	cm.updateActiveConsumers()
+
+	return true
+}
+
+func (cm *ConsumerManager) CleanInactive(timeout time.Duration) int {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+
+	now := time.Now()
+	removed := 0
+
+	for id, c := range cm.consumers {
+		if c.group == nil {
+			c.mutex.Lock()
+			lastRead := c.lastReadTime
+			c.mutex.Unlock()
+
+			if now.Sub(lastRead) > timeout {
+				c.Close()
+				delete(cm.consumers, id)
+				removed++
+			}
+		}
+	}
+
+	if removed > 0 {
+		cm.updateActiveConsumers()
+	}
+
+	return removed
 }
 
 // RemoveConsumer removes a consumer from the queue
@@ -765,7 +835,32 @@ func (cm *ConsumerManager) GetAllConsumers() []*Consumer {
 }
 
 // NotifyAllConsumersOfExpiration notifies all consumers about expired items
-func (cm *ConsumerManager) NotifyAllConsumersOfExpiration(expiredCounts map[string]int, newFirstElement *list.Element, removalInfo []ChunkRemovalInfo) {
+func calculateExpiredCount(chunkElement *list.Element, indexInChunk int, removalInfo []ChunkRemovalInfo) int {
+	if chunkElement == nil {
+		total := 0
+		for _, info := range removalInfo {
+			total += info.RemovedCount
+		}
+		return total
+	}
+
+	expiredCount := 0
+	foundConsumerChunk := false
+
+	for _, info := range removalInfo {
+		if foundConsumerChunk {
+			expiredCount += info.RemovedCount
+		} else if info.Element == chunkElement {
+			foundConsumerChunk = true
+			if info.RemovedCount > indexInChunk {
+				expiredCount += info.RemovedCount - indexInChunk
+			}
+		}
+	}
+	return expiredCount
+}
+
+func (cm *ConsumerManager) NotifyAllConsumersOfExpiration(newFirstElement *list.Element, removalInfo []ChunkRemovalInfo) {
 	cm.mutex.RLock()
 	defer cm.mutex.RUnlock()
 
@@ -776,8 +871,18 @@ func (cm *ConsumerManager) NotifyAllConsumersOfExpiration(expiredCounts map[stri
 	}
 
 	for _, consumer := range cm.consumers {
+		if consumer.group != nil {
+			continue
+		}
+
+		consumer.mutex.Lock()
+		chunkElement, indexInChunk := consumer.getPositionUnsafe()
+		consumer.mutex.Unlock()
+
+		expiredCount := calculateExpiredCount(chunkElement, indexInChunk, removalInfo)
+
 		// Notify consumers about their unread expired items
-		if expiredCount, hasExpired := expiredCounts[consumer.GetID()]; hasExpired && expiredCount > 0 {
+		if expiredCount > 0 {
 			consumer.NotifyExpiredItems(expiredCount)
 		}
 
@@ -788,10 +893,21 @@ func (cm *ConsumerManager) NotifyAllConsumersOfExpiration(expiredCounts map[stri
 		}
 	}
 
-	// Update Consumer Groups positions
-	if totalExpired > 0 {
+	if totalExpired > 0 || len(removalInfo) > 0 {
 		for _, group := range cm.groups {
-			group.UpdatePositionAfterExpiration(totalExpired, newFirstElement, removalInfo)
+			group.mutex.Lock()
+			chunkElement := group.chunkElement
+			indexInChunk := group.indexInChunk
+			group.mutex.Unlock()
+
+			expiredCount := calculateExpiredCount(chunkElement, indexInChunk, removalInfo)
+			if expiredCount > 0 {
+				group.NotifyExpiredItems(expiredCount)
+			}
+
+			if totalExpired > 0 {
+				group.UpdatePositionAfterExpiration(totalExpired, newFirstElement, removalInfo)
+			}
 		}
 	}
 }

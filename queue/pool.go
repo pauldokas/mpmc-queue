@@ -1,33 +1,21 @@
 package queue
 
-import (
-	"sync"
-)
-
-// chunkNodePool is a pool for recycling ChunkNode objects
-// This reduces GC pressure by reusing the 8KB arrays used for chunk storage
-var chunkNodePool = sync.Pool{
-	New: func() any {
-		return &ChunkNode{
-			Data: [1000]*QueueData{},
-			size: 0,
-		}
-	},
-}
-
-// GetChunkNode retrieves a ChunkNode from the pool
+// GetChunkNode creates a new ChunkNode
 func GetChunkNode() *ChunkNode {
-	return chunkNodePool.Get().(*ChunkNode)
+	return &ChunkNode{
+		Data: [1000]*QueueData{},
+		size: 0,
+	}
 }
 
-// PutChunkNode returns a ChunkNode to the pool
-// It clears the data to prevent memory leaks before returning
+// PutChunkNode clears the node to help GC and discards it
 func PutChunkNode(cn *ChunkNode) {
-	// Reset data array completely to avoid holding references to QueueData
+	if cn == nil {
+		return
+	}
+	// Reset data array completely to prevent memory leaks before discarding
 	for i := range cn.Data {
 		cn.Data[i] = nil
 	}
-
 	cn.setSize(0)
-	chunkNodePool.Put(cn)
 }

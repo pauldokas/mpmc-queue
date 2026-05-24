@@ -29,8 +29,7 @@ type Sizeable interface {
 type MemoryTracker struct {
 	totalMemory int64
 	maxMemory   int64
-	sizeCache   map[reflect.Type]int64
-	cacheMutex  sync.RWMutex
+	sizeCache   sync.Map
 }
 
 // NewMemoryTracker creates a new memory tracker
@@ -41,7 +40,6 @@ func NewMemoryTracker(maxMemory int64) *MemoryTracker {
 	return &MemoryTracker{
 		totalMemory: 0,
 		maxMemory:   maxMemory,
-		sizeCache:   make(map[reflect.Type]int64),
 	}
 }
 
@@ -71,6 +69,24 @@ func (mt *MemoryTracker) EstimateQueueDataSize(data *QueueData) int64 {
 	size += int64(len(data.EnqueueEvent.EventType))
 
 	return size
+}
+
+// CanAddData checks if adding the data would exceed memory limit
+func (mt *MemoryTracker) CanAddData(data *QueueData) bool {
+	return mt.totalMemory+data.GetSize() <= mt.maxMemory
+}
+
+// AddData adds memory usage for the data
+func (mt *MemoryTracker) AddData(data *QueueData) {
+	mt.totalMemory += data.GetSize()
+}
+
+// RemoveData removes memory usage for the data
+func (mt *MemoryTracker) RemoveData(data *QueueData) {
+	mt.totalMemory -= data.GetSize()
+	if mt.totalMemory < 0 {
+		mt.totalMemory = 0
+	}
 }
 
 // estimatePayloadSize estimates the size of an arbitrary payload
@@ -119,25 +135,36 @@ func (mt *MemoryTracker) estimatePayloadSize(payload any) int64 {
 	}
 
 	v := reflect.ValueOf(payload)
-	size, _ := mt.estimateValueSize(v)
+	size, _ := mt.estimateValueSize(v, make(map[uintptr]bool))
 	return size
 }
 
 // estimateValueSize recursively estimates the size of a reflect.Value
 // Returns size and whether the type has a fixed size
-func (mt *MemoryTracker) estimateValueSize(v reflect.Value) (int64, bool) {
+func (mt *MemoryTracker) estimateValueSize(v reflect.Value, visited map[uintptr]bool) (int64, bool) {
 	if !v.IsValid() {
 		return 0, true
+	}
+
+	// Cycle detection for pointers, maps, and slices
+	switch v.Kind() {
+	case reflect.Ptr, reflect.Map, reflect.Slice:
+		if !v.IsNil() {
+			ptr := v.Pointer()
+			if visited[ptr] {
+				// Already visited, don't count again to prevent stack overflow on cycles
+				return 0, false
+			}
+			visited[ptr] = true
+		}
 	}
 
 	t := v.Type()
 
 	// Check cache
-	mt.cacheMutex.RLock()
-	cached, ok := mt.sizeCache[t]
-	mt.cacheMutex.RUnlock()
-
+	cachedVal, ok := mt.sizeCache.Load(t)
 	if ok {
+		cached := cachedVal.(int64)
 		if cached >= 0 {
 			return cached, true
 		}
@@ -163,7 +190,7 @@ func (mt *MemoryTracker) estimateValueSize(v reflect.Value) (int64, bool) {
 		size = 0
 		// Arrays have fixed length, but elements might be variable (e.g. [10]string)
 		for i := 0; i < v.Len(); i++ {
-			elemSize, elemFixed := mt.estimateValueSize(v.Index(i))
+			elemSize, elemFixed := mt.estimateValueSize(v.Index(i), visited)
 			size += elemSize
 			if !elemFixed {
 				isFixed = false
@@ -173,22 +200,22 @@ func (mt *MemoryTracker) estimateValueSize(v reflect.Value) (int64, bool) {
 		isFixed = false
 		size = 0
 		for i := 0; i < v.Len(); i++ {
-			elemSize, _ := mt.estimateValueSize(v.Index(i))
+			elemSize, _ := mt.estimateValueSize(v.Index(i), visited)
 			size += elemSize
 		}
 	case reflect.Map:
 		isFixed = false
 		size = 0
 		for _, key := range v.MapKeys() {
-			kSize, _ := mt.estimateValueSize(key)
-			vSize, _ := mt.estimateValueSize(v.MapIndex(key))
+			kSize, _ := mt.estimateValueSize(key, visited)
+			vSize, _ := mt.estimateValueSize(v.MapIndex(key), visited)
 			size += kSize + vSize
 		}
 	case reflect.Struct:
 		size = 0
 		for i := 0; i < v.NumField(); i++ {
 			if v.Field(i).CanInterface() {
-				fSize, fFixed := mt.estimateValueSize(v.Field(i))
+				fSize, fFixed := mt.estimateValueSize(v.Field(i), visited)
 				size += fSize
 				if !fFixed {
 					isFixed = false
@@ -200,7 +227,7 @@ func (mt *MemoryTracker) estimateValueSize(v reflect.Value) (int64, bool) {
 		if v.IsNil() {
 			size = int64(unsafe.Sizeof(uintptr(0)))
 		} else {
-			elemSize, _ := mt.estimateValueSize(v.Elem())
+			elemSize, _ := mt.estimateValueSize(v.Elem(), visited)
 			size = int64(unsafe.Sizeof(uintptr(0))) + elemSize
 		}
 	default:
@@ -210,37 +237,14 @@ func (mt *MemoryTracker) estimateValueSize(v reflect.Value) (int64, bool) {
 
 	// Update cache if needed
 	if !ok {
-		mt.cacheMutex.Lock()
 		if isFixed {
-			mt.sizeCache[t] = size
+			mt.sizeCache.Store(t, size)
 		} else {
-			mt.sizeCache[t] = -1 // Mark as variable
+			mt.sizeCache.Store(t, int64(-1)) // Mark as variable
 		}
-		mt.cacheMutex.Unlock()
 	}
 
 	return size, isFixed
-}
-
-// CanAddData checks if adding the data would exceed memory limit
-func (mt *MemoryTracker) CanAddData(data *QueueData) bool {
-	estimatedSize := mt.EstimateQueueDataSize(data)
-	return mt.totalMemory+estimatedSize <= mt.maxMemory
-}
-
-// AddData adds memory usage for the data
-func (mt *MemoryTracker) AddData(data *QueueData) {
-	size := mt.EstimateQueueDataSize(data)
-	mt.totalMemory += size
-}
-
-// RemoveData removes memory usage for the data
-func (mt *MemoryTracker) RemoveData(data *QueueData) {
-	size := mt.EstimateQueueDataSize(data)
-	mt.totalMemory -= size
-	if mt.totalMemory < 0 {
-		mt.totalMemory = 0
-	}
 }
 
 // AddChunk adds memory usage for a chunk
