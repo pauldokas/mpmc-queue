@@ -68,7 +68,7 @@ func TestEnqueueDequeue(t *testing.T) {
 	}
 
 	if len(history) > 0 && history[0].DataID != data.ID {
-		t.Errorf("Expected dequeue record for data ID %s, got %s", data.ID, history[0].DataID)
+		t.Errorf("Expected dequeue record for data ID %d, got %d", data.ID, history[0].DataID)
 	}
 }
 
@@ -160,7 +160,10 @@ func TestConcurrentProducers(t *testing.T) {
 		go func(producerID int) {
 			defer wg.Done()
 			for j := 0; j < itemsPerProducer; j++ {
-				payload := map[string]int{"producer": producerID, "item": j}
+				payload := struct{
+					Producer int
+					Item     int
+				}{Producer: producerID, Item: j}
 				if err := q.TryEnqueue(payload); err != nil {
 					t.Errorf("Producer %d failed to enqueue item %d: %v", producerID, j, err)
 					return

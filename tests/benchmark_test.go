@@ -210,12 +210,18 @@ func BenchmarkMixedWorkload(b *testing.B) {
 }
 
 func BenchmarkMemoryEstimation(b *testing.B) {
-	testPayload := map[string]any{
-		"id":     12345,
-		"name":   "test item",
-		"data":   []byte("some binary data here"),
-		"active": true,
-		"tags":   []string{"tag1", "tag2", "tag3"},
+	testPayload := struct {
+		ID     int
+		Name   string
+		Data   []byte
+		Active bool
+		Tags   []string
+	}{
+		ID:     12345,
+		Name:   "test item",
+		Data:   []byte("some binary data here"),
+		Active: true,
+		Tags:   []string{"tag1", "tag2", "tag3"},
 	}
 
 	b.ResetTimer()
@@ -263,10 +269,14 @@ func TestHighThroughputStress(t *testing.T) {
 			start := time.Now()
 			count := 0
 			for time.Since(start) < testDuration && count < itemsPerProducer {
-				payload := map[string]any{
-					"producer":  producerID,
-					"item":      count,
-					"timestamp": time.Now(),
+				payload := struct {
+					Producer  int
+					Item      int
+					Timestamp time.Time
+				}{
+					Producer:  producerID,
+					Item:      count,
+					Timestamp: time.Now(),
 				}
 				if err := q.TryEnqueue(payload); err != nil {
 					// Memory limit is expected in stress test, just stop producing
@@ -396,10 +406,14 @@ func TestLongRunningStability(t *testing.T) {
 			defer wg.Done()
 			count := 0
 			for time.Since(start) < testDuration {
-				payload := map[string]any{
-					"producer":  producerID,
-					"count":     count,
-					"timestamp": time.Now(),
+				payload := struct {
+					Producer  int
+					Count     int
+					Timestamp time.Time
+				}{
+					Producer:  producerID,
+					Count:     count,
+					Timestamp: time.Now(),
 				}
 				q.TryEnqueue(payload)
 				count++

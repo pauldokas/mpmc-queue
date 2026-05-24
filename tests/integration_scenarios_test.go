@@ -23,10 +23,14 @@ func TestScenario_JobQueue(t *testing.T) {
 
 	// Enqueue jobs
 	for i := 0; i < numJobs; i++ {
-		job := map[string]any{
-			"id":      i,
-			"type":    "process",
-			"payload": fmt.Sprintf("job-%d", i),
+		job := struct {
+			ID      int
+			Type    string
+			Payload string
+		}{
+			ID:      i,
+			Type:    "process",
+			Payload: fmt.Sprintf("job-%d", i),
 		}
 		if err := q.TryEnqueue(job); err != nil {
 			t.Fatalf("Failed to enqueue job %d: %v", i, err)
@@ -77,11 +81,16 @@ func TestScenario_EventStreaming(t *testing.T) {
 	// Publisher goroutine
 	go func() {
 		for i := 0; i < numEvents; i++ {
-			event := map[string]any{
-				"eventType": "user_action",
-				"userId":    fmt.Sprintf("user-%d", i%10),
-				"action":    "click",
-				"timestamp": time.Now(),
+			event := struct {
+				EventType string
+				UserID    string
+				Action    string
+				Timestamp time.Time
+			}{
+				EventType: "user_action",
+				UserID:    fmt.Sprintf("user-%d", i%10),
+				Action:    "click",
+				Timestamp: time.Now(),
 			}
 			q.TryEnqueue(event)
 			time.Sleep(5 * time.Millisecond)

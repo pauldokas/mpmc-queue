@@ -3,6 +3,9 @@
 package tests
 
 import (
+	"context"
+	"fmt"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -10,6 +13,12 @@ import (
 
 	"mpmc-queue/queue"
 )
+
+type stressPayload struct {
+	Producer int
+	Item     int
+	Time     time.Time
+}
 
 // TestExtremeProducerConsumerStress hammers the queue with high concurrency
 func TestExtremeProducerConsumerStress(t *testing.T) {
@@ -40,10 +49,10 @@ func TestExtremeProducerConsumerStress(t *testing.T) {
 			count := 0
 
 			for time.Since(start) < testDuration && count < itemsPerProducer {
-				payload := map[string]any{
-					"producer": id,
-					"item":     count,
-					"time":     time.Now(),
+				payload := stressPayload{
+					Producer: id,
+					Item:     count,
+					Time:     time.Now(),
 				}
 
 				if err := q.TryEnqueue(payload); err != nil {
@@ -76,9 +85,9 @@ func TestExtremeProducerConsumerStress(t *testing.T) {
 					consumed.Add(1)
 
 					// Verify data integrity
-					if payload, ok := data.Payload.(map[string]any); ok {
-						if _, hasProducer := payload["producer"]; !hasProducer {
-							t.Errorf("Consumer %d read corrupted data: missing producer field", id)
+					if payload, ok := data.Payload.(stressPayload); ok {
+						if payload.Producer < 0 {
+							t.Errorf("Consumer %d read corrupted data: invalid producer field", id)
 							errors.Add(1)
 						}
 					} else {

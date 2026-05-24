@@ -114,16 +114,21 @@ func (m *Metrics) RecordExpired(count int) {
 // GetSnapshot returns a point-in-time snapshot of metrics
 func (m *Metrics) GetSnapshot() MetricsSnapshot {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	stats := m.queue.GetQueueStats()
+	
+	var enqueueLatencyCopy []time.Duration
+	if m.enqueueLatencyCount > 0 {
+		enqueueLatencyCopy = make([]time.Duration, m.enqueueLatencyCount)
+		copy(enqueueLatencyCopy, m.enqueueLatency[:m.enqueueLatencyCount])
+	}
+	
+	var dequeueLatencyCopy []time.Duration
+	if m.dequeueLatencyCount > 0 {
+		dequeueLatencyCopy = make([]time.Duration, m.dequeueLatencyCount)
+		copy(dequeueLatencyCopy, m.dequeueLatency[:m.dequeueLatencyCount])
+	}
 
 	snapshot := MetricsSnapshot{
 		QueueName:       m.queue.GetName(),
-		TotalItems:      stats.TotalItems,
-		MemoryUsage:     stats.MemoryUsage,
-		MemoryPercent:   stats.MemoryPercent,
-		ConsumerCount:   stats.ConsumerCount,
 		TotalEnqueued:   m.totalEnqueued,
 		TotalDequeued:   m.totalDequeued,
 		TotalExpired:    m.totalExpired,
@@ -131,16 +136,23 @@ func (m *Metrics) GetSnapshot() MetricsSnapshot {
 		MemoryLimitHits: m.memoryLimitHits,
 		Timestamp:       time.Now(),
 	}
+	
+	m.mu.RUnlock()
 
-	// Calculate latency percentiles
-	if m.enqueueLatencyCount > 0 {
-		snapshot.AvgEnqueueLatency = calculateAvg(m.enqueueLatency[:m.enqueueLatencyCount])
-		snapshot.P95EnqueueLatency = calculateP95(m.enqueueLatency[:m.enqueueLatencyCount])
+	stats := m.queue.GetQueueStats()
+	snapshot.TotalItems = stats.TotalItems
+	snapshot.MemoryUsage = stats.MemoryUsage
+	snapshot.MemoryPercent = stats.MemoryPercent
+	snapshot.ConsumerCount = stats.ConsumerCount
+
+	if len(enqueueLatencyCopy) > 0 {
+		snapshot.AvgEnqueueLatency = calculateAvg(enqueueLatencyCopy)
+		snapshot.P95EnqueueLatency = calculateP95(enqueueLatencyCopy)
 	}
 
-	if m.dequeueLatencyCount > 0 {
-		snapshot.AvgDequeueLatency = calculateAvg(m.dequeueLatency[:m.dequeueLatencyCount])
-		snapshot.P95DequeueLatency = calculateP95(m.dequeueLatency[:m.dequeueLatencyCount])
+	if len(dequeueLatencyCopy) > 0 {
+		snapshot.AvgDequeueLatency = calculateAvg(dequeueLatencyCopy)
+		snapshot.P95DequeueLatency = calculateP95(dequeueLatencyCopy)
 	}
 
 	return snapshot

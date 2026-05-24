@@ -187,18 +187,12 @@ func (cg *ConsumerGroup) UpdatePositionAfterExpiration(expiredCount int, newFirs
 	}
 
 	if newFirstElement != nil {
-		currentElement := cg.chunkElement
-		stillValid := false
-		for element := newFirstElement; element != nil; element = element.Next() {
-			if element == currentElement {
-				stillValid = true
-				break
+		if cg.chunkElement != nil {
+			chunk := cg.chunkElement.Value.(*ChunkNode)
+			if chunk.pooled.Load() {
+				cg.chunkElement = newFirstElement
+				cg.indexInChunk = 0
 			}
-		}
-
-		if !stillValid {
-			cg.chunkElement = newFirstElement
-			cg.indexInChunk = 0
 		}
 	} else {
 		cg.chunkElement = nil
@@ -208,9 +202,8 @@ func (cg *ConsumerGroup) UpdatePositionAfterExpiration(expiredCount int, newFirs
 
 // TryReadWhere is not supported for ConsumerGroups as it permanently consumes non-matching items
 // from the shared cursor, robbing other consumers of data.
-func (cg *ConsumerGroup) TryReadWhere(predicate func(*QueueData) bool) *QueueData {
-	// Restricting filtering logic on consumer groups to prevent data loss for other consumers.
-	return nil
+func (cg *ConsumerGroup) TryReadWhere(predicate func(*QueueData) bool) (*QueueData, error) {
+	return nil, &FilterNotSupportedError{}
 }
 
 // HasMoreData checks if the group has more data

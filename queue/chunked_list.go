@@ -211,11 +211,7 @@ func (cl *ChunkedList) Clear() {
 		size := chunk.GetSize()
 		head := int(atomic.LoadInt32(&chunk.head))
 		for i := head; i < size; i++ {
-			data := chunk.Data[i].Load()
-			if data != nil {
-				data.Release()
-				chunk.Data[i].Store(nil)
-			}
+			chunk.Data[i] = QueueData{}
 		}
 
 		cl.list.Remove(element)

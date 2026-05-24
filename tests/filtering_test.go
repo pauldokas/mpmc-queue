@@ -28,7 +28,7 @@ func TestTryReadWhere_BasicFiltering(t *testing.T) {
 	// Filter for even numbers only
 	evens := []int{}
 	for {
-		data := consumer.TryReadWhere(func(d *queue.QueueData) bool {
+		data, _ := consumer.TryReadWhere(func(d *queue.QueueData) bool {
 			num, ok := d.Payload.(int)
 			return ok && num%2 == 0
 		})
@@ -66,7 +66,7 @@ func TestTryReadWhere_NoMatch(t *testing.T) {
 	consumer := q.AddConsumer()
 
 	// Try to filter for even numbers
-	data := consumer.TryReadWhere(func(d *queue.QueueData) bool {
+	data, _ := consumer.TryReadWhere(func(d *queue.QueueData) bool {
 		num, ok := d.Payload.(int)
 		return ok && num%2 == 0
 	})
@@ -89,7 +89,7 @@ func TestTryReadWhere_NilPredicate(t *testing.T) {
 	}
 
 	consumer := q.AddConsumer()
-	data := consumer.TryReadWhere(nil)
+	data, _ := consumer.TryReadWhere(nil)
 
 	if data != nil {
 		t.Error("Expected nil with nil predicate, got data")
@@ -102,7 +102,7 @@ func TestTryReadWhere_EmptyQueue(t *testing.T) {
 	defer q.Close()
 
 	consumer := q.AddConsumer()
-	data := consumer.TryReadWhere(func(d *queue.QueueData) bool {
+	data, _ := consumer.TryReadWhere(func(d *queue.QueueData) bool {
 		return true
 	})
 
@@ -121,7 +121,7 @@ func TestReadWhere_Blocking(t *testing.T) {
 
 	// Start goroutine that will block waiting for matching data
 	go func() {
-		data := consumer.ReadWhere(func(d *queue.QueueData) bool {
+		data, _ := consumer.ReadWhere(func(d *queue.QueueData) bool {
 			num, ok := d.Payload.(int)
 			return ok && num == 42
 		})
@@ -333,7 +333,7 @@ func TestFiltering_MultipleConsumers(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for {
-			data := consumer1.TryReadWhere(func(d *queue.QueueData) bool {
+			data, _ := consumer1.TryReadWhere(func(d *queue.QueueData) bool {
 				num, ok := d.Payload.(int)
 				return ok && num%2 == 0
 			})
@@ -350,7 +350,7 @@ func TestFiltering_MultipleConsumers(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for {
-			data := consumer2.TryReadWhere(func(d *queue.QueueData) bool {
+			data, _ := consumer2.TryReadWhere(func(d *queue.QueueData) bool {
 				num, ok := d.Payload.(int)
 				return ok && num%2 == 1
 			})
@@ -391,7 +391,7 @@ func TestFiltering_ConcurrentEnqueueAndFilter(t *testing.T) {
 
 	// Then filter for multiples of 10
 	for {
-		data := consumer.TryReadWhere(func(d *queue.QueueData) bool {
+		data, _ := consumer.TryReadWhere(func(d *queue.QueueData) bool {
 			num, ok := d.Payload.(int)
 			return ok && num%10 == 0
 		})
@@ -424,7 +424,7 @@ func TestFiltering_QueueClosed(t *testing.T) {
 
 	// Start blocking read
 	go func() {
-		data := consumer.ReadWhere(func(d *queue.QueueData) bool {
+		data, _ := consumer.ReadWhere(func(d *queue.QueueData) bool {
 			num, ok := d.Payload.(int)
 			return ok && num == 100 // Won't match
 		})
@@ -466,7 +466,7 @@ func TestFiltering_ComplexPredicate(t *testing.T) {
 	// Filter for words longer than 5 characters and starting with vowel
 	matches := []string{}
 	for {
-		data := consumer.TryReadWhere(func(d *queue.QueueData) bool {
+		data, _ := consumer.TryReadWhere(func(d *queue.QueueData) bool {
 			str, ok := d.Payload.(string)
 			if !ok || len(str) <= 5 {
 				return false

@@ -45,7 +45,7 @@ func TestConsumerHistoryLimit(t *testing.T) {
 	// Verify that history contains the MOST RECENT items
 	// The last item should be "item-24"
 	lastItem := history[len(history)-1]
-	if lastItem.DataID == "" {
+		if lastItem.DataID == 0 {
 		t.Errorf("Last history item has empty DataID")
 	}
 }

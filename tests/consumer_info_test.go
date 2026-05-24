@@ -282,7 +282,7 @@ func TestGetDequeueHistoryGrowth(t *testing.T) {
 
 	// Verify history has correct IDs
 	for i, record := range history {
-		if record.DataID == "" {
+			if record.DataID == 0 {
 			t.Errorf("History entry %d has empty DataID", i)
 		}
 		if record.Timestamp.IsZero() {

@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -297,6 +298,9 @@ func (q *Queue) TryEnqueueBatch(payloads []any) error {
 		dataItems[i] = NewQueueData(payload, q.name)
 		size := q.memoryTracker.EstimateQueueDataSize(dataItems[i])
 		dataItems[i].SetSize(size)
+		if math.MaxInt64 - totalBatchSize < size {
+			return fmt.Errorf("integer overflow in batch memory calculation")
+		}
 		totalBatchSize += size
 	}
 
@@ -336,6 +340,9 @@ func (q *Queue) EnqueueBatch(payloads []any) error {
 		dataItems[i] = NewQueueData(payload, q.name)
 		size := q.memoryTracker.EstimateQueueDataSize(dataItems[i])
 		dataItems[i].SetSize(size)
+		if math.MaxInt64 - totalBatchSize < size {
+			return fmt.Errorf("integer overflow in batch memory calculation")
+		}
 		totalBatchSize += size
 	}
 
@@ -397,6 +404,9 @@ func (q *Queue) EnqueueBatchWithContext(ctx context.Context, payloads []any) err
 		dataItems[i] = NewQueueData(payload, q.name)
 		size := q.memoryTracker.EstimateQueueDataSize(dataItems[i])
 		dataItems[i].SetSize(size)
+		if math.MaxInt64 - totalBatchSize < size {
+			return fmt.Errorf("integer overflow in batch memory calculation")
+		}
 		totalBatchSize += size
 	}
 

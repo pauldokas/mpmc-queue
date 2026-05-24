@@ -133,10 +133,10 @@ func TestConcurrentProducersAndConsumersNoRace(t *testing.T) {
 		go func(producerID int) {
 			defer wg.Done()
 			for j := 0; j < itemsPerProducer; j++ {
-				payload := map[string]any{
-					"producer": producerID,
-					"item":     j,
-				}
+				payload := struct{
+					Producer int
+					Item     int
+				}{producerID, j}
 				if err := q.TryEnqueue(payload); err != nil {
 					t.Errorf("Producer %d failed to enqueue: %v", producerID, err)
 				}

@@ -12,7 +12,7 @@ import (
 
 // DequeueRecord represents a single dequeue event for a consumer
 type DequeueRecord struct {
-	DataID    string    `json:"data_id"`
+	DataID    uint64    `json:"data_id"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -27,7 +27,6 @@ type Consumer struct {
 	mutex sync.Mutex
 	_     [64]byte // Prevent false sharing
 
-	_              [64]byte // Prevent false sharing
 	totalItemsRead atomic.Int64 // Total items this consumer has read
 	_              [64]byte // Prevent false sharing
 
@@ -59,7 +58,7 @@ func NewConsumer(queue *Queue) *Consumer {
 	}
 }
 
-func (c *Consumer) addToHistoryUnsafe(dataID string) {
+func (c *Consumer) addToHistoryUnsafe(dataID uint64) {
 	c.dequeueHistory = append(c.dequeueHistory, DequeueRecord{
 		DataID:    dataID,
 		Timestamp: time.Now(),
@@ -523,25 +522,13 @@ func (c *Consumer) UpdatePositionAfterExpiration(expiredCount int, newFirstEleme
 		}
 	}
 
-	// If the consumer is reading from expired chunks, update position
 	if newFirstElement != nil {
-		// Check if our current position is in an expired chunk
-		currentElement := c.chunkElement
-		stillValid := false
-
-		// Walk through remaining chunks to see if our position is still valid
-		// NOTE: We rely on the caller holding queue.mutex for safe list traversal
-		for element := newFirstElement; element != nil; element = element.Next() {
-			if element == currentElement {
-				stillValid = true
-				break
+		if c.chunkElement != nil {
+			chunk := c.chunkElement.Value.(*ChunkNode)
+			if chunk.pooled.Load() {
+				c.chunkElement = newFirstElement
+				c.indexInChunk = 0
 			}
-		}
-
-		if !stillValid {
-			// Our position is in an expired chunk, move to the new first element
-			c.chunkElement = newFirstElement
-			c.indexInChunk = 0
 		}
 	} else {
 		c.chunkElement = nil
@@ -566,15 +553,15 @@ func (c *Consumer) Close() {
 // Returns nil if no matching data is available
 // The predicate function should return true for items that should be returned
 // Note: This advances the consumer position as it searches, consuming non-matching items
-func (c *Consumer) TryReadWhere(predicate func(*QueueData) bool) *QueueData {
+func (c *Consumer) TryReadWhere(predicate func(*QueueData) bool) (*QueueData, error) {
 	if c.group != nil {
 		// Filtering is restricted for ConsumerGroups to prevent destructive consumption
 		// of non-matching items from the shared cursor.
-		return nil
+		return nil, &FilterNotSupportedError{}
 	}
 
 	if predicate == nil {
-		return nil
+		return nil, nil
 	}
 
 	// Keep reading until we find a match or run out of data
@@ -582,12 +569,12 @@ func (c *Consumer) TryReadWhere(predicate func(*QueueData) bool) *QueueData {
 		data := c.TryRead()
 		if data == nil {
 			// No more data available
-			return nil
+			return nil, nil
 		}
 
 		// Check if data matches predicate
 		if predicate(data) {
-			return data
+			return data, nil
 		}
 
 		// Continue to next item
@@ -597,20 +584,23 @@ func (c *Consumer) TryReadWhere(predicate func(*QueueData) bool) *QueueData {
 // ReadWhere reads the next data item that matches the predicate, blocking until a match is found
 // Blocks until matching data becomes available or the queue is closed
 // The predicate function should return true for items that should be returned
-func (c *Consumer) ReadWhere(predicate func(*QueueData) bool) *QueueData {
+func (c *Consumer) ReadWhere(predicate func(*QueueData) bool) (*QueueData, error) {
 	if predicate == nil {
-		return nil
+		return nil, nil
 	}
 
 	if c.group != nil {
 		// Filtering is restricted for ConsumerGroups
-		return nil
+		return nil, &FilterNotSupportedError{}
 	}
 
 	for {
-		data := c.TryReadWhere(predicate)
+		data, err := c.TryReadWhere(predicate)
+		if err != nil {
+			return nil, err
+		}
 		if data != nil {
-			return data
+			return data, nil
 		}
 
 		// No matching data available, wait for notification
@@ -620,7 +610,7 @@ func (c *Consumer) ReadWhere(predicate func(*QueueData) bool) *QueueData {
 			continue
 		case <-c.queue.stopChan:
 			// Queue is closing, return nil
-			return nil
+			return nil, nil
 		}
 	}
 }
@@ -635,35 +625,45 @@ func (c *Consumer) ReadWhereWithContext(ctx context.Context, predicate func(*Que
 
 	if c.group != nil {
 		// Filtering is restricted for ConsumerGroups
-		return nil, nil
+		return nil, &FilterNotSupportedError{}
 	}
 
 	for {
-		// Check context first
+		// Check for context cancellation before checking for data
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
+			// Context not cancelled, continue
 		}
 
-		data := c.TryReadWhere(predicate)
+		data, err := c.TryReadWhere(predicate)
+		if err != nil {
+			return nil, err
+		}
 		if data != nil {
 			return data, nil
 		}
 
 		// No matching data available, wait for notification
 		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		case <-c.queue.enqueueNotify:
 			// New data might be available, retry
 			continue
 		case <-c.queue.stopChan:
 			// Queue is closing, return nil
 			return nil, nil
-		case <-ctx.Done():
-			return nil, ctx.Err()
 		}
 	}
 }
+
+
+
+
+
+
 
 // ConsumerStats represents consumer statistics
 type ConsumerStats struct {
@@ -780,16 +780,28 @@ func (cm *ConsumerManager) CleanInactive(timeout time.Duration) int {
 	removed := 0
 
 	for id, c := range cm.consumers {
-		if c.group == nil {
-			c.mutex.Lock()
-			lastRead := c.lastReadTime
-			c.mutex.Unlock()
+		c.mutex.Lock()
+		lastRead := c.lastReadTime
+		c.mutex.Unlock()
 
-			if now.Sub(lastRead) > timeout {
-				c.Close()
-				delete(cm.consumers, id)
-				removed++
+		if now.Sub(lastRead) > timeout {
+			c.Close()
+			delete(cm.consumers, id)
+			removed++
+		}
+	}
+
+	for name, g := range cm.groups {
+		hasConsumers := false
+		for _, c := range cm.consumers {
+			if c.group == g {
+				hasConsumers = true
+				break
 			}
+		}
+		if !hasConsumers {
+			g.Close()
+			delete(cm.groups, name)
 		}
 	}
 

@@ -59,9 +59,6 @@ func (mt *MemoryTracker) EstimateQueueDataSize(data *QueueData) int64 {
 
 	size := BaseQueueDataSize
 
-	// Add size of ID string
-	size += int64(len(data.ID))
-
 	// Add size of payload
 	size += mt.estimatePayloadSize(data.Payload)
 
@@ -85,9 +82,16 @@ func (mt *MemoryTracker) AddData(data *QueueData) {
 
 // RemoveData removes memory usage for the data
 func (mt *MemoryTracker) RemoveData(data *QueueData) {
-	newVal := mt.totalMemory.Add(-data.GetSize())
-	if newVal < 0 {
-		mt.totalMemory.Store(0)
+	size := data.GetSize()
+	for {
+		current := mt.totalMemory.Load()
+		newVal := current - size
+		if newVal < 0 {
+			newVal = 0
+		}
+		if mt.totalMemory.CompareAndSwap(current, newVal) {
+			break
+		}
 	}
 }
 
@@ -141,7 +145,7 @@ func (mt *MemoryTracker) estimatePayloadSize(payload any) int64 {
 	}
 
 	v := reflect.ValueOf(payload)
-	size, _ := mt.estimateValueSize(v, make(map[uintptr]bool))
+	size, _ := mt.estimateValueSize(v, nil)
 	return size
 }
 
@@ -157,9 +161,12 @@ func (mt *MemoryTracker) estimateValueSize(v reflect.Value, visited map[uintptr]
 	case reflect.Ptr, reflect.Map, reflect.Slice:
 		if !v.IsNil() {
 			ptr := v.Pointer()
-			if visited[ptr] {
+			if visited != nil && visited[ptr] {
 				// Already visited, don't count again to prevent stack overflow on cycles
 				return 0, false
+			}
+			if visited == nil {
+				visited = make(map[uintptr]bool)
 			}
 			visited[ptr] = true
 		}
@@ -211,10 +218,12 @@ func (mt *MemoryTracker) estimateValueSize(v reflect.Value, visited map[uintptr]
 		}
 	case reflect.Map:
 		isFixed = false
-		size = 0
 		// We cannot safely iterate over a map using reflection (v.MapKeys())
 		// because if the user mutates the map concurrently, Go will throw a fatal unrecoverable error.
-		// If users need exact memory tracking for maps, they should wrap them in a type that implements Sizeable.
+		// Even v.Len() causes a data race. Since we cannot safely measure arbitrary maps,
+		// we return a massive size to force rejection by MaxMemory limits.
+		// Users MUST implement the Sizeable interface for maps to be enqueued.
+		size = 1 << 40
 	case reflect.Struct:
 		size = 0
 		for i := 0; i < v.NumField(); i++ {
@@ -258,9 +267,15 @@ func (mt *MemoryTracker) AddChunk() {
 
 // RemoveChunk removes memory usage for a chunk
 func (mt *MemoryTracker) RemoveChunk() {
-	newVal := mt.totalMemory.Add(-ChunkNodeSize)
-	if newVal < 0 {
-		mt.totalMemory.Store(0)
+	for {
+		current := mt.totalMemory.Load()
+		newVal := current - ChunkNodeSize
+		if newVal < 0 {
+			newVal = 0
+		}
+		if mt.totalMemory.CompareAndSwap(current, newVal) {
+			break
+		}
 	}
 }
 

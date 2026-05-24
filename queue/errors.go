@@ -57,3 +57,10 @@ type QueueError struct {
 func (e *QueueError) Error() string {
 	return e.Message
 }
+
+// FilterNotSupportedError is returned when a filtering operation is attempted on a consumer group
+type FilterNotSupportedError struct{}
+
+func (e *FilterNotSupportedError) Error() string {
+	return "filtering operations are not supported for consumer groups"
+}

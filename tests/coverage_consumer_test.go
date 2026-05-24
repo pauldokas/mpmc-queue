@@ -339,7 +339,7 @@ func TestConsumer_GetDequeueHistory(t *testing.T) {
 
 	// Verify history has data IDs
 	for i, record := range history {
-		if record.DataID == "" {
+			if record.DataID == 0 {
 			t.Errorf("Record %d has empty DataID", i)
 		}
 		if record.Timestamp.IsZero() {
@@ -358,7 +358,7 @@ func TestConsumer_ReadWhere_Uncovered(t *testing.T) {
 	// Start blocking read in goroutine
 	resultChan := make(chan *queue.QueueData, 1)
 	go func() {
-		data := consumer.ReadWhere(func(d *queue.QueueData) bool {
+		data, _ := consumer.ReadWhere(func(d *queue.QueueData) bool {
 			num, ok := d.Payload.(int)
 			return ok && num == 42
 		})
