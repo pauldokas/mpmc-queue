@@ -8,7 +8,7 @@ import (
 
 func TestCrossQueueLeak(t *testing.T) {
 	q1 := queue.NewQueue("q1")
-	q1.Enqueue("public-data")
+	_ = q1.Enqueue("public-data")
 
 	c1 := q1.AddConsumer()
 	data1 := c1.TryRead()
@@ -20,8 +20,8 @@ func TestCrossQueueLeak(t *testing.T) {
 
 	q2 := queue.NewQueue("q2")
 	defer q2.Close()
-	q2.Enqueue("SECRET-DATA-1")
-	q2.Enqueue("SECRET-DATA-2")
+	_ = q2.Enqueue("SECRET-DATA-1")
+	_ = q2.Enqueue("SECRET-DATA-2")
 
 	fmt.Printf("Before TryRead: c1 HasMoreData() = %v\n", c1.HasMoreData())
 	leakedData := c1.TryRead()

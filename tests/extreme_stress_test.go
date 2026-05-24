@@ -3,9 +3,6 @@
 package tests
 
 import (
-	"context"
-	"fmt"
-	"math/rand"
 	"sync"
 	"sync/atomic"
 	"testing"

@@ -12,23 +12,20 @@ func TestNotificationBufferFull(t *testing.T) {
 	defer q.Close()
 
 	for i := 0; i < 200; i++ {
-		q.TryEnqueue(i)
+		_ = q.TryEnqueue(i)
 	}
 
-	var consumers []*queue.Consumer
 	for i := 0; i < 200; i++ {
-		consumers = append(consumers, q.AddConsumer())
+		_ = q.AddConsumer()
 	}
 
 	q2 := queue.NewQueue("notify-buffer-test-2")
 	defer q2.Close()
 
-	var consumers2 []*queue.Consumer
 	var wg sync.WaitGroup
 
 	for i := 0; i < 200; i++ {
 		c := q2.AddConsumer()
-		consumers2 = append(consumers2, c)
 		wg.Add(1)
 		go func(consumer *queue.Consumer) {
 			defer wg.Done()
@@ -42,7 +39,7 @@ func TestNotificationBufferFull(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		payloads = append(payloads, i)
 	}
-	q2.TryEnqueueBatch(payloads)
+	_ = q2.TryEnqueueBatch(payloads)
 
 	done := make(chan struct{})
 	go func() {

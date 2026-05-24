@@ -198,9 +198,9 @@ func TestQueueDataImmutability(t *testing.T) {
 		t.Fatal("Expected data from both consumers")
 	}
 
-	// Verify both consumers got the exact same QueueData instance (pointer equality)
-	if data1 != data2 {
-		t.Error("Expected both consumers to read the same QueueData instance")
+	// Verify both consumers got the same QueueData (ID equality)
+	if data1.ID != data2.ID {
+		t.Error("Expected both consumers to read the same QueueData ID")
 	}
 
 	// Verify enqueue event is immutable

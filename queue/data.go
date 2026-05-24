@@ -2,6 +2,7 @@ package queue
 
 import (
 	"container/list"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -72,9 +73,10 @@ func (qd *QueueData) IsExpired(ttl time.Duration) bool {
 type ChunkNode struct {
 	Data [1000]QueueData `json:"data"`
 
-	_    [64]byte // Prevent false sharing
-	size int32    // Current number of items in this chunk (use atomic operations)
-	_    [64]byte // Prevent false sharing
+	mu   sync.RWMutex // Protects Data array during expiration/read overlap
+	_    [64]byte     // Prevent false sharing
+	size int32        // Current number of items in this chunk (use atomic operations)
+	_    [64]byte     // Prevent false sharing
 	head int32
 	_    [64]byte // Prevent false sharing
 
@@ -92,11 +94,6 @@ func (cn *ChunkNode) GetSize() int {
 	return int(atomic.LoadInt32(&cn.size))
 }
 
-// setSize sets the size using atomic store (private method)
-func (cn *ChunkNode) setSize(newSize int) {
-	atomic.StoreInt32(&cn.size, int32(newSize))
-}
-
 // incrementSize atomically increments the size and returns the new value
 func (cn *ChunkNode) incrementSize() int {
 	return int(atomic.AddInt32(&cn.size, 1))
@@ -104,6 +101,9 @@ func (cn *ChunkNode) incrementSize() int {
 
 // Add adds data to the chunk if there's space
 func (cn *ChunkNode) Add(data *QueueData) bool {
+	cn.mu.Lock()
+	defer cn.mu.Unlock()
+
 	currentSize := cn.GetSize()
 	if currentSize >= 1000 {
 		return false
@@ -115,12 +115,17 @@ func (cn *ChunkNode) Add(data *QueueData) bool {
 
 // Get retrieves data at the specified index
 func (cn *ChunkNode) Get(index int) *QueueData {
+	cn.mu.RLock()
+	defer cn.mu.RUnlock()
+
 	size := cn.GetSize()
 	head := int(atomic.LoadInt32(&cn.head))
 	if index < head || index >= size {
 		return nil
 	}
-	return &cn.Data[index]
+	
+	data := cn.Data[index]
+	return &data
 }
 
 // IsFull returns true if the chunk is at capacity
@@ -136,16 +141,20 @@ func (cn *ChunkNode) IsEmpty() bool {
 
 // RemoveExpired removes expired items from the beginning of the chunk
 // Returns the number of items removed and the removed items for memory tracking
-func (cn *ChunkNode) RemoveExpired(ttl time.Duration) (int, []*QueueData) {
+func (cn *ChunkNode) RemoveExpired(ttl time.Duration) (int, []QueueData) {
+	cn.mu.Lock()
+	defer cn.mu.Unlock()
+
 	size := cn.GetSize()
 	head := int(atomic.LoadInt32(&cn.head))
 	removed := 0
-	removedItems := make([]*QueueData, 0)
+	removedItems := make([]QueueData, 0)
 
 	for i := head; i < size; i++ {
 		data := &cn.Data[i]
 		if data.IsExpired(ttl) {
-			removedItems = append(removedItems, data)
+			removedItems = append(removedItems, *data)
+			cn.Data[i] = QueueData{} // Zero out to allow GC of payload
 			atomic.AddInt32(&cn.head, 1)
 			removed++
 		} else {
@@ -158,16 +167,14 @@ func (cn *ChunkNode) RemoveExpired(ttl time.Duration) (int, []*QueueData) {
 
 // GetEarliestExpiry returns the creation time of the earliest item in the chunk
 func (cn *ChunkNode) GetEarliestExpiry() *time.Time {
+	cn.mu.RLock()
+	defer cn.mu.RUnlock()
+
 	size := cn.GetSize()
 	head := int(atomic.LoadInt32(&cn.head))
 	if head == size {
 		return nil
 	}
 
-	for i := head; i < size; i++ {
-		data := &cn.Data[i]
-		return &data.Created
-	}
-
-	return nil
+	return &cn.Data[head].Created
 }

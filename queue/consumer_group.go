@@ -124,7 +124,13 @@ func (cg *ConsumerGroup) TryRead() *QueueData {
 		chunkSize := chunk.GetSize()
 
 		if currentIndex < chunkSize {
+			cg.queue.mutex.RLock()
 			data := chunk.Get(currentIndex)
+			var dataCopy QueueData
+			if data != nil {
+				dataCopy = *data
+			}
+			cg.queue.mutex.RUnlock()
 
 			if data != nil {
 				cg.mutex.Lock()
@@ -132,8 +138,7 @@ func (cg *ConsumerGroup) TryRead() *QueueData {
 					cg.indexInChunk++
 					cg.mutex.Unlock()
 					
-					data.Retain()
-					return data
+					return &dataCopy
 				}
 				cg.mutex.Unlock()
 				continue
@@ -245,6 +250,9 @@ func (cg *ConsumerGroup) GetUnreadCount() int64 {
 	if cg.queue.closed.Load() || cg.closed.Load() {
 		return 0
 	}
+
+	cg.queue.mutex.RLock()
+	defer cg.queue.mutex.RUnlock()
 
 	cg.mutex.Lock()
 	chunkElement := cg.chunkElement

@@ -304,7 +304,7 @@ func (q *Queue) TryEnqueueBatch(payloads []any) error {
 		totalBatchSize += size
 	}
 
-	if q.memoryTracker.GetMemoryUsage()+totalBatchSize > q.memoryTracker.GetMaxMemory() {
+	if totalBatchSize > q.memoryTracker.GetMaxMemory() - q.memoryTracker.GetMemoryUsage() {
 		return &MemoryLimitError{
 			Current: q.memoryTracker.GetMemoryUsage(),
 			Max:     q.memoryTracker.GetMaxMemory(),
@@ -362,7 +362,7 @@ func (q *Queue) EnqueueBatch(payloads []any) error {
 			}
 		}
 
-		if q.memoryTracker.GetMemoryUsage()+totalBatchSize <= q.memoryTracker.GetMaxMemory() {
+		if q.memoryTracker.GetMaxMemory() - q.memoryTracker.GetMemoryUsage() >= totalBatchSize {
 			if err := q.data.EnqueueBatch(dataItems); err != nil {
 				q.mutex.Unlock()
 				return err
@@ -433,7 +433,7 @@ func (q *Queue) EnqueueBatchWithContext(ctx context.Context, payloads []any) err
 			}
 		}
 
-		if q.memoryTracker.GetMemoryUsage()+totalBatchSize <= q.memoryTracker.GetMaxMemory() {
+		if q.memoryTracker.GetMaxMemory() - q.memoryTracker.GetMemoryUsage() >= totalBatchSize {
 			if err := q.data.EnqueueBatch(dataItems); err != nil {
 				q.mutex.Unlock()
 				return err
@@ -649,8 +649,8 @@ func (q *Queue) cleanupExpiredItems() int {
 
 	if expiredCount > 0 {
 		// Notify ALL waiting producers that space is available
-		// Send multiple notifications to wake up multiple blocked producers
-		for i := 0; i < 50; i++ {
+		// Fill the channel to wake up as many as possible
+		for {
 			select {
 			case q.dequeueNotify <- struct{}{}:
 				// Sent successfully

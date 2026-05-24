@@ -175,28 +175,34 @@ func (c *Consumer) TryRead() *QueueData {
 		chunkSize := chunk.GetSize()
 
 		if currentIndex < chunkSize {
+			c.queue.mutex.RLock()
 			data := chunk.Get(currentIndex)
+			var dataCopy QueueData
+			if data != nil {
+				dataCopy = *data
+			}
+			c.queue.mutex.RUnlock()
 
 			if data != nil {
 				c.mutex.Lock()
 				if c.chunkElement == currentElement && c.indexInChunk == currentIndex {
-					c.addToHistoryUnsafe(data.ID)
+					c.addToHistoryUnsafe(dataCopy.ID)
 					c.indexInChunk++
 					c.lastReadTime = time.Now()
 					c.totalItemsRead.Add(1)
 					c.mutex.Unlock()
 
-					data.Retain()
-					return data
+					return &dataCopy
 				}
 				c.mutex.Unlock()
 				continue
 			}
 			
-			if int32(currentIndex) < atomic.LoadInt32(&chunk.head) {
+			head := int(atomic.LoadInt32(&chunk.head))
+			if currentIndex < head {
 				c.mutex.Lock()
 				if c.chunkElement == currentElement && c.indexInChunk == currentIndex {
-					c.indexInChunk++
+					c.indexInChunk = head
 				}
 				c.mutex.Unlock()
 				continue
@@ -413,6 +419,9 @@ func (c *Consumer) GetUnreadCount() int64 {
 	if c.group != nil {
 		return c.group.GetUnreadCount()
 	}
+
+	c.queue.mutex.RLock()
+	defer c.queue.mutex.RUnlock()
 
 	c.mutex.Lock()
 	chunkElement := c.chunkElement
@@ -658,12 +667,6 @@ func (c *Consumer) ReadWhereWithContext(ctx context.Context, predicate func(*Que
 		}
 	}
 }
-
-
-
-
-
-
 
 // ConsumerStats represents consumer statistics
 type ConsumerStats struct {

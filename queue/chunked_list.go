@@ -154,10 +154,10 @@ func (cl *ChunkedList) RemoveExpiredData(ttl time.Duration) (int, []ChunkRemoval
 
 		if removedFromChunk > 0 {
 			// Update memory tracking properly
-			for _, data := range removedItems {
-				cl.memoryTracker.RemoveData(data)
+			for i := range removedItems {
+				cl.memoryTracker.RemoveData(&removedItems[i])
 				cl.totalItems.Add(-1)
-				data.Release()
+				removedItems[i].Release()
 			}
 			totalRemoved += removedFromChunk
 
@@ -211,6 +211,7 @@ func (cl *ChunkedList) Clear() {
 		size := chunk.GetSize()
 		head := int(atomic.LoadInt32(&chunk.head))
 		for i := head; i < size; i++ {
+			cl.memoryTracker.RemoveData(&chunk.Data[i])
 			chunk.Data[i] = QueueData{}
 		}
 
