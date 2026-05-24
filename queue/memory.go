@@ -3,6 +3,7 @@ package queue
 import (
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 )
 
@@ -27,7 +28,7 @@ type Sizeable interface {
 
 // MemoryTracker tracks memory usage for the queue
 type MemoryTracker struct {
-	totalMemory int64
+	totalMemory atomic.Int64
 	maxMemory   int64
 	sizeCache   sync.Map
 }
@@ -37,10 +38,11 @@ func NewMemoryTracker(maxMemory int64) *MemoryTracker {
 	if maxMemory <= 0 {
 		maxMemory = MaxQueueMemory
 	}
-	return &MemoryTracker{
-		totalMemory: 0,
-		maxMemory:   maxMemory,
+	mt := &MemoryTracker{
+		maxMemory: maxMemory,
 	}
+	mt.totalMemory.Store(0)
+	return mt
 }
 
 // GetMaxMemory returns the maximum allowed memory
@@ -73,19 +75,19 @@ func (mt *MemoryTracker) EstimateQueueDataSize(data *QueueData) int64 {
 
 // CanAddData checks if adding the data would exceed memory limit
 func (mt *MemoryTracker) CanAddData(data *QueueData) bool {
-	return mt.totalMemory+data.GetSize() <= mt.maxMemory
+	return mt.totalMemory.Load()+data.GetSize() <= mt.maxMemory
 }
 
 // AddData adds memory usage for the data
 func (mt *MemoryTracker) AddData(data *QueueData) {
-	mt.totalMemory += data.GetSize()
+	mt.totalMemory.Add(data.GetSize())
 }
 
 // RemoveData removes memory usage for the data
 func (mt *MemoryTracker) RemoveData(data *QueueData) {
-	mt.totalMemory -= data.GetSize()
-	if mt.totalMemory < 0 {
-		mt.totalMemory = 0
+	newVal := mt.totalMemory.Add(-data.GetSize())
+	if newVal < 0 {
+		mt.totalMemory.Store(0)
 	}
 }
 
@@ -131,7 +133,11 @@ func (mt *MemoryTracker) estimatePayloadSize(payload any) int64 {
 
 	// Check for Size() method (Sizeable interface)
 	if s, ok := payload.(Sizeable); ok {
-		return int64(s.Size())
+		size := s.Size()
+		if size < 0 {
+			return 0
+		}
+		return int64(size)
 	}
 
 	v := reflect.ValueOf(payload)
@@ -206,11 +212,9 @@ func (mt *MemoryTracker) estimateValueSize(v reflect.Value, visited map[uintptr]
 	case reflect.Map:
 		isFixed = false
 		size = 0
-		for _, key := range v.MapKeys() {
-			kSize, _ := mt.estimateValueSize(key, visited)
-			vSize, _ := mt.estimateValueSize(v.MapIndex(key), visited)
-			size += kSize + vSize
-		}
+		// We cannot safely iterate over a map using reflection (v.MapKeys())
+		// because if the user mutates the map concurrently, Go will throw a fatal unrecoverable error.
+		// If users need exact memory tracking for maps, they should wrap them in a type that implements Sizeable.
 	case reflect.Struct:
 		size = 0
 		for i := 0; i < v.NumField(); i++ {
@@ -249,25 +253,25 @@ func (mt *MemoryTracker) estimateValueSize(v reflect.Value, visited map[uintptr]
 
 // AddChunk adds memory usage for a chunk
 func (mt *MemoryTracker) AddChunk() {
-	mt.totalMemory += ChunkNodeSize
+	mt.totalMemory.Add(ChunkNodeSize)
 }
 
 // RemoveChunk removes memory usage for a chunk
 func (mt *MemoryTracker) RemoveChunk() {
-	mt.totalMemory -= ChunkNodeSize
-	if mt.totalMemory < 0 {
-		mt.totalMemory = 0
+	newVal := mt.totalMemory.Add(-ChunkNodeSize)
+	if newVal < 0 {
+		mt.totalMemory.Store(0)
 	}
 }
 
 // GetMemoryUsage returns current memory usage
 func (mt *MemoryTracker) GetMemoryUsage() int64 {
-	return mt.totalMemory
+	return mt.totalMemory.Load()
 }
 
 // GetMemoryUsagePercent returns memory usage as a percentage
 func (mt *MemoryTracker) GetMemoryUsagePercent() float64 {
-	return float64(mt.totalMemory) / float64(mt.maxMemory) * 100
+	return float64(mt.totalMemory.Load()) / float64(mt.maxMemory) * 100
 }
 
 // IsNearLimit checks if memory usage is near the limit (>90%)

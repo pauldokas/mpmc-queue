@@ -159,6 +159,14 @@ func (q *Queue) Enqueue(payload any) error {
 	data := NewQueueData(payload, q.name)
 	data.SetSize(q.memoryTracker.EstimateQueueDataSize(data))
 
+	if data.GetSize() > q.memoryTracker.GetMaxMemory() {
+		return &MemoryLimitError{
+			Current: q.memoryTracker.GetMemoryUsage(),
+			Max:     q.memoryTracker.GetMaxMemory(),
+			Needed:  data.GetSize(),
+		}
+	}
+
 	for {
 		q.mutex.Lock()
 		if q.closed.Load() {
@@ -174,7 +182,12 @@ func (q *Queue) Enqueue(payload any) error {
 		}
 
 		// Check if it's a memory limit error
-		if _, ok := err.(*MemoryLimitError); !ok {
+		if memErr, ok := err.(*MemoryLimitError); ok {
+			if memErr.Needed > memErr.Max {
+				q.mutex.Unlock()
+				return err
+			}
+		} else {
 			q.mutex.Unlock()
 			return err // Return non-memory errors immediately
 		}
@@ -202,6 +215,14 @@ func (q *Queue) EnqueueWithContext(ctx context.Context, payload any) error {
 	data := NewQueueData(payload, q.name)
 	data.SetSize(q.memoryTracker.EstimateQueueDataSize(data))
 
+	if data.GetSize() > q.memoryTracker.GetMaxMemory() {
+		return &MemoryLimitError{
+			Current: q.memoryTracker.GetMemoryUsage(),
+			Max:     q.memoryTracker.GetMaxMemory(),
+			Needed:  data.GetSize(),
+		}
+	}
+
 	for {
 		// Check context first before locking
 		select {
@@ -224,7 +245,12 @@ func (q *Queue) EnqueueWithContext(ctx context.Context, payload any) error {
 		}
 
 		// Check if it's a memory limit error
-		if _, ok := err.(*MemoryLimitError); !ok {
+		if memErr, ok := err.(*MemoryLimitError); ok {
+			if memErr.Needed > memErr.Max {
+				q.mutex.Unlock()
+				return fmt.Errorf("enqueue failed: %w", err)
+			}
+		} else {
 			q.mutex.Unlock()
 			return fmt.Errorf("enqueue failed: %w", err) // Return non-memory errors with wrapping
 		}
@@ -274,35 +300,11 @@ func (q *Queue) TryEnqueueBatch(payloads []any) error {
 		totalBatchSize += size
 	}
 
-	// Calculate chunk overhead
-	var chunkOverhead int64
-	itemsToAdd := len(payloads)
-	lastElement := q.data.GetLastElement()
-
-	if lastElement == nil {
-		// Empty list, need at least 1 chunk
-		chunkOverhead += ChunkNodeSize
-		remaining := itemsToAdd - ChunkSize
-		if remaining > 0 {
-			numExtra := (remaining + ChunkSize - 1) / ChunkSize
-			chunkOverhead += int64(numExtra) * ChunkNodeSize
-		}
-	} else {
-		chunk := q.data.GetChunk(lastElement)
-		available := ChunkSize - chunk.GetSize()
-
-		if itemsToAdd > available {
-			remaining := itemsToAdd - available
-			numExtra := (remaining + ChunkSize - 1) / ChunkSize
-			chunkOverhead += int64(numExtra) * ChunkNodeSize
-		}
-	}
-
-	if q.memoryTracker.GetMemoryUsage()+totalBatchSize+chunkOverhead > q.memoryTracker.GetMaxMemory() {
+	if q.memoryTracker.GetMemoryUsage()+totalBatchSize > q.memoryTracker.GetMaxMemory() {
 		return &MemoryLimitError{
 			Current: q.memoryTracker.GetMemoryUsage(),
 			Max:     q.memoryTracker.GetMaxMemory(),
-			Needed:  totalBatchSize + chunkOverhead,
+			Needed:  totalBatchSize,
 		}
 	}
 
@@ -344,31 +346,16 @@ func (q *Queue) EnqueueBatch(payloads []any) error {
 			return &QueueClosedError{Operation: "enqueue batch"}
 		}
 
-		// Calculate chunk overhead
-		var chunkOverhead int64
-		itemsToAdd := len(payloads)
-		lastElement := q.data.GetLastElement()
-
-		if lastElement == nil {
-			// Empty list, need at least 1 chunk
-			chunkOverhead += ChunkNodeSize
-			remaining := itemsToAdd - ChunkSize
-			if remaining > 0 {
-				numExtra := (remaining + ChunkSize - 1) / ChunkSize
-				chunkOverhead += int64(numExtra) * ChunkNodeSize
-			}
-		} else {
-			chunk := q.data.GetChunk(lastElement)
-			available := ChunkSize - chunk.GetSize()
-
-			if itemsToAdd > available {
-				remaining := itemsToAdd - available
-				numExtra := (remaining + ChunkSize - 1) / ChunkSize
-				chunkOverhead += int64(numExtra) * ChunkNodeSize
+		if totalBatchSize > q.memoryTracker.GetMaxMemory() {
+			q.mutex.Unlock()
+			return &MemoryLimitError{
+				Current: q.memoryTracker.GetMemoryUsage(),
+				Max:     q.memoryTracker.GetMaxMemory(),
+				Needed:  totalBatchSize,
 			}
 		}
 
-		if q.memoryTracker.GetMemoryUsage()+totalBatchSize+chunkOverhead <= q.memoryTracker.GetMaxMemory() {
+		if q.memoryTracker.GetMemoryUsage()+totalBatchSize <= q.memoryTracker.GetMaxMemory() {
 			if err := q.data.EnqueueBatch(dataItems); err != nil {
 				q.mutex.Unlock()
 				return err
@@ -427,31 +414,16 @@ func (q *Queue) EnqueueBatchWithContext(ctx context.Context, payloads []any) err
 			return &QueueClosedError{Operation: "enqueue batch"}
 		}
 
-		// Calculate chunk overhead
-		var chunkOverhead int64
-		itemsToAdd := len(payloads)
-		lastElement := q.data.GetLastElement()
-
-		if lastElement == nil {
-			// Empty list, need at least 1 chunk
-			chunkOverhead += ChunkNodeSize
-			remaining := itemsToAdd - ChunkSize
-			if remaining > 0 {
-				numExtra := (remaining + ChunkSize - 1) / ChunkSize
-				chunkOverhead += int64(numExtra) * ChunkNodeSize
-			}
-		} else {
-			chunk := q.data.GetChunk(lastElement)
-			available := ChunkSize - chunk.GetSize()
-
-			if itemsToAdd > available {
-				remaining := itemsToAdd - available
-				numExtra := (remaining + ChunkSize - 1) / ChunkSize
-				chunkOverhead += int64(numExtra) * ChunkNodeSize
+		if totalBatchSize > q.memoryTracker.GetMaxMemory() {
+			q.mutex.Unlock()
+			return &MemoryLimitError{
+				Current: q.memoryTracker.GetMemoryUsage(),
+				Max:     q.memoryTracker.GetMaxMemory(),
+				Needed:  totalBatchSize,
 			}
 		}
 
-		if q.memoryTracker.GetMemoryUsage()+totalBatchSize+chunkOverhead <= q.memoryTracker.GetMaxMemory() {
+		if q.memoryTracker.GetMemoryUsage()+totalBatchSize <= q.memoryTracker.GetMaxMemory() {
 			if err := q.data.EnqueueBatch(dataItems); err != nil {
 				q.mutex.Unlock()
 				return err
@@ -514,9 +486,6 @@ func (q *Queue) GetAllConsumers() []*Consumer {
 
 // GetQueueStats returns queue statistics
 func (q *Queue) GetQueueStats() QueueStats {
-	q.mutex.RLock()
-	defer q.mutex.RUnlock()
-
 	return QueueStats{
 		Name:          q.name,
 		TotalItems:    q.data.GetTotalItems(),
@@ -661,13 +630,14 @@ func (q *Queue) cleanupExpiredItems() int {
 	var newFirstElement *list.Element
 	if expiredCount > 0 {
 		newFirstElement = q.data.GetFirstElement()
+
+		// MUST hold q.mutex while notifying consumers to safely traverse the chunked list
+		q.consumers.NotifyAllConsumersOfExpiration(newFirstElement, removalInfo)
 	}
 	
 	q.mutex.Unlock()
 
 	if expiredCount > 0 {
-		q.consumers.NotifyAllConsumersOfExpiration(newFirstElement, removalInfo)
-
 		// Notify ALL waiting producers that space is available
 		// Send multiple notifications to wake up multiple blocked producers
 		for i := 0; i < 50; i++ {

@@ -3,6 +3,7 @@ package queue
 import (
 	"container/list"
 	"sync"
+	"sync/atomic"
 )
 
 // ConsumerGroup represents a group of consumers that share the work of processing the queue.
@@ -14,7 +15,7 @@ type ConsumerGroup struct {
 	indexInChunk   int           // Shared position within current chunk
 	notificationCh chan int      // Notification of expired items for the group
 	mutex          sync.Mutex
-	consumers      []*Consumer // Track consumers in this group
+	closed         atomic.Bool
 }
 
 // NewConsumerGroup creates a new consumer group
@@ -23,7 +24,6 @@ func NewConsumerGroup(name string, queue *Queue) *ConsumerGroup {
 		name:           name,
 		queue:          queue,
 		notificationCh: make(chan int, 100),
-		consumers:      make([]*Consumer, 0),
 	}
 }
 
@@ -37,6 +37,10 @@ func (cg *ConsumerGroup) NotifyExpiredItems(count int) {
 	cg.mutex.Lock()
 	defer cg.mutex.Unlock()
 
+	if cg.closed.Load() {
+		return
+	}
+
 	select {
 	case cg.notificationCh <- count:
 		// Notification sent successfully
@@ -47,12 +51,11 @@ func (cg *ConsumerGroup) NotifyExpiredItems(count int) {
 
 // AddConsumer adds a new consumer to this group
 func (cg *ConsumerGroup) AddConsumer() *Consumer {
+	if cg.closed.Load() {
+		return nil
+	}
 	// Register with the queue's manager, but mark as part of this group
 	consumer := cg.queue.consumers.AddConsumerToGroup(cg)
-
-	cg.mutex.Lock()
-	cg.consumers = append(cg.consumers, consumer)
-	cg.mutex.Unlock()
 
 	return consumer
 }
@@ -67,6 +70,10 @@ func (cg *ConsumerGroup) getPosition() (*list.Element, int) {
 // TryRead attempts to read the next item for the group
 // This is called by consumers belonging to the group
 func (cg *ConsumerGroup) TryRead() *QueueData {
+	if cg.queue.closed.Load() || cg.closed.Load() {
+		return nil
+	}
+
 	// Logic is very similar to Consumer.TryRead but acts on group state
 
 	// Initialize position if this is the first read
@@ -93,50 +100,57 @@ func (cg *ConsumerGroup) TryRead() *QueueData {
 	}
 
 	for {
-		cg.queue.mutex.RLock()
-
 		cg.mutex.Lock()
 		currentElement := cg.chunkElement
 		currentIndex := cg.indexInChunk
 		cg.mutex.Unlock()
 
 		if currentElement == nil {
-			cg.queue.mutex.RUnlock()
 			return nil
 		}
 
-		// Access chunk safely with read lock
 		chunk := currentElement.Value.(*ChunkNode)
+
+		if chunk.pooled.Load() {
+			cg.mutex.Lock()
+			if cg.chunkElement == currentElement {
+				cg.chunkElement = nil
+				cg.indexInChunk = 0
+			}
+			cg.mutex.Unlock()
+			return nil
+		}
+
 		chunkSize := chunk.GetSize()
 
 		if currentIndex < chunkSize {
-			// Read data while holding queue lock
 			data := chunk.Get(currentIndex)
-			cg.queue.mutex.RUnlock()
 
 			if data != nil {
-				// Record dequeue and update position atomically
 				cg.mutex.Lock()
 				if cg.chunkElement == currentElement && cg.indexInChunk == currentIndex {
 					cg.indexInChunk++
 					cg.mutex.Unlock()
+					
+					data.Retain()
 					return data
 				}
 				cg.mutex.Unlock()
-				// Position changed, retry
 				continue
 			}
 
-			// Skip nil items
-			cg.mutex.Lock()
-			if cg.chunkElement == currentElement && cg.indexInChunk == currentIndex {
-				cg.indexInChunk++
+			if int32(currentIndex) < atomic.LoadInt32(&chunk.head) {
+				cg.mutex.Lock()
+				if cg.chunkElement == currentElement && cg.indexInChunk == currentIndex {
+					cg.indexInChunk++
+				}
+				cg.mutex.Unlock()
+				continue
 			}
-			cg.mutex.Unlock()
+			
+			return nil
 		} else {
-			// Move to next chunk
-			nextElement := currentElement.Next()
-			cg.queue.mutex.RUnlock()
+			nextElement := chunk.NextElement.Load()
 
 			cg.mutex.Lock()
 			if cg.chunkElement == currentElement && cg.indexInChunk == currentIndex {
@@ -159,15 +173,14 @@ func (cg *ConsumerGroup) UpdatePositionAfterExpiration(expiredCount int, newFirs
 	cg.mutex.Lock()
 	defer cg.mutex.Unlock()
 
-	if cg.chunkElement == nil || expiredCount == 0 {
+	if cg.closed.Load() || cg.chunkElement == nil || expiredCount == 0 {
 		return
 	}
 
 	for _, info := range removalInfo {
 		if info.Element == cg.chunkElement {
-			cg.indexInChunk -= info.RemovedCount
-			if cg.indexInChunk < 0 {
-				cg.indexInChunk = 0
+			if cg.indexInChunk < info.NewHead {
+				cg.indexInChunk = info.NewHead
 			}
 			break
 		}
@@ -202,8 +215,9 @@ func (cg *ConsumerGroup) TryReadWhere(predicate func(*QueueData) bool) *QueueDat
 
 // HasMoreData checks if the group has more data
 func (cg *ConsumerGroup) HasMoreData() bool {
-	cg.queue.mutex.RLock()
-	defer cg.queue.mutex.RUnlock()
+	if cg.queue.closed.Load() || cg.closed.Load() {
+		return false
+	}
 
 	cg.mutex.Lock()
 	chunkElement := cg.chunkElement
@@ -220,14 +234,24 @@ func (cg *ConsumerGroup) HasMoreData() bool {
 		return true
 	}
 
-	// Check if there are more chunks
-	return chunkElement.Next() != nil
+	return chunk.NextElement.Load() != nil
+}
+
+func (cg *ConsumerGroup) Close() {
+	cg.mutex.Lock()
+	defer cg.mutex.Unlock()
+	
+	if !cg.closed.CompareAndSwap(false, true) {
+		return
+	}
+	close(cg.notificationCh)
 }
 
 // GetUnreadCount returns the number of unread items for the group
 func (cg *ConsumerGroup) GetUnreadCount() int64 {
-	cg.queue.mutex.RLock()
-	defer cg.queue.mutex.RUnlock()
+	if cg.queue.closed.Load() || cg.closed.Load() {
+		return 0
+	}
 
 	cg.mutex.Lock()
 	chunkElement := cg.chunkElement

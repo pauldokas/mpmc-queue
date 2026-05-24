@@ -16,7 +16,7 @@ func TestChunkNodePooling(t *testing.T) {
 	if node1.GetSize() != 1 {
 		t.Errorf("Add failed, size: %d", node1.GetSize())
 	}
-	if node1.Data[0] != data {
+	if node1.Get(0) != data {
 		t.Errorf("Data[0] mismatch")
 	}
 
@@ -27,7 +27,7 @@ func TestChunkNodePooling(t *testing.T) {
 	if node2.GetSize() != 0 {
 		t.Errorf("Pooled node size not reset: %d", node2.GetSize())
 	}
-	if node2.Data[0] != nil {
+	if node2.Get(0) != nil {
 		t.Errorf("Pooled node Data[0] not nil")
 	}
 }

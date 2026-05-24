@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"container/list"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -19,11 +20,12 @@ type QueueEvent struct {
 // QueueData represents a single item in the queue
 // QueueData is immutable after creation for thread-safety
 type QueueData struct {
-	ID           string     `json:"id"`            // UUID or Sequence
-	Payload      any        `json:"payload"`       // Arbitrary data
-	EnqueueEvent QueueEvent `json:"enqueue_event"` // Single enqueue event (immutable)
-	Created      time.Time  `json:"created"`       // For expiration tracking
+	ID           string       `json:"id"`            // UUID or Sequence
+	Payload      any          `json:"payload"`       // Arbitrary data
+	EnqueueEvent QueueEvent   `json:"enqueue_event"` // Single enqueue event (immutable)
+	Created      time.Time    `json:"created"`       // For expiration tracking
 	size         int64
+	refCount     atomic.Int32
 }
 
 var queueDataPool = sync.Pool{
@@ -37,7 +39,7 @@ func NewQueueData(payload any, queueName string) *QueueData {
 	now := time.Now()
 	id := dataIDSequence.Add(1)
 	
-	qd := queueDataPool.Get().(*QueueData)
+	qd := &QueueData{}
 	qd.ID = strconv.FormatUint(id, 10)
 	qd.Payload = payload
 	qd.EnqueueEvent.Timestamp = now
@@ -49,15 +51,10 @@ func NewQueueData(payload any, queueName string) *QueueData {
 	return qd
 }
 
-// RecycleQueueData puts the QueueData back into the pool
-func RecycleQueueData(qd *QueueData) {
-	if qd == nil {
-		return
-	}
-	qd.Payload = nil // Prevent memory leaks
-	qd.EnqueueEvent.QueueName = ""
-	qd.ID = ""
-	queueDataPool.Put(qd)
+func (qd *QueueData) Retain() {
+}
+
+func (qd *QueueData) Release() {
 }
 
 // SetSize sets the pre-calculated size of the data
@@ -82,11 +79,15 @@ func (qd *QueueData) IsExpired(ttl time.Duration) bool {
 
 // ChunkNode represents a node in the chunked list containing up to 1000 data items
 type ChunkNode struct {
-	Data [1000]*QueueData `json:"data"`
+	Data [1000]atomic.Pointer[QueueData] `json:"data"`
 
 	_    [64]byte // Prevent false sharing
 	size int32    // Current number of items in this chunk (use atomic operations)
+	head int32
 	_    [64]byte // Prevent false sharing
+
+	NextElement atomic.Pointer[list.Element]
+	pooled      atomic.Bool
 }
 
 // NewChunkNode creates a new empty chunk node
@@ -115,7 +116,7 @@ func (cn *ChunkNode) Add(data *QueueData) bool {
 	if currentSize >= 1000 {
 		return false
 	}
-	cn.Data[currentSize] = data
+	cn.Data[currentSize].Store(data)
 	cn.incrementSize()
 	return true
 }
@@ -126,7 +127,7 @@ func (cn *ChunkNode) Get(index int) *QueueData {
 	if index < 0 || index >= size {
 		return nil
 	}
-	return cn.Data[index]
+	return cn.Data[index].Load()
 }
 
 // IsFull returns true if the chunk is at capacity
@@ -136,33 +137,31 @@ func (cn *ChunkNode) IsFull() bool {
 
 // IsEmpty returns true if the chunk has no data
 func (cn *ChunkNode) IsEmpty() bool {
-	return cn.GetSize() == 0
+	head := int(atomic.LoadInt32(&cn.head))
+	return head == cn.GetSize()
 }
 
 // RemoveExpired removes expired items from the beginning of the chunk
 // Returns the number of items removed and the removed items for memory tracking
 func (cn *ChunkNode) RemoveExpired(ttl time.Duration) (int, []*QueueData) {
 	size := cn.GetSize()
+	head := int(atomic.LoadInt32(&cn.head))
 	removed := 0
 	removedItems := make([]*QueueData, 0)
 
-	for i := 0; i < size; i++ {
-		if cn.Data[i] != nil && cn.Data[i].IsExpired(ttl) {
-			removedItems = append(removedItems, cn.Data[i])
-			cn.Data[i] = nil
+	for i := head; i < size; i++ {
+		data := cn.Data[i].Load()
+		if data != nil && data.IsExpired(ttl) {
+			removedItems = append(removedItems, data)
+			cn.Data[i].Store(nil)
 			removed++
-		} else {
+		} else if data != nil {
 			break // Items are ordered by creation time
 		}
 	}
 
-	// Compact the array if items were removed
 	if removed > 0 {
-		for i := removed; i < size; i++ {
-			cn.Data[i-removed] = cn.Data[i]
-			cn.Data[i] = nil
-		}
-		cn.setSize(size - removed)
+		atomic.AddInt32(&cn.head, int32(removed))
 	}
 
 	return removed, removedItems
@@ -171,13 +170,15 @@ func (cn *ChunkNode) RemoveExpired(ttl time.Duration) (int, []*QueueData) {
 // GetEarliestExpiry returns the creation time of the earliest item in the chunk
 func (cn *ChunkNode) GetEarliestExpiry() *time.Time {
 	size := cn.GetSize()
-	if size == 0 {
+	head := int(atomic.LoadInt32(&cn.head))
+	if head == size {
 		return nil
 	}
 
-	for i := 0; i < size; i++ {
-		if cn.Data[i] != nil {
-			return &cn.Data[i].Created
+	for i := head; i < size; i++ {
+		data := cn.Data[i].Load()
+		if data != nil {
+			return &data.Created
 		}
 	}
 

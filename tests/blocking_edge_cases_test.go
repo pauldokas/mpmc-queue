@@ -368,6 +368,7 @@ func TestConcurrentBlockingAndNonBlocking(t *testing.T) {
 			}
 			time.Sleep(time.Millisecond)
 		}
+		t.Log("TryEnqueue producer done")
 	}()
 
 	// Add data with blocking Enqueue
@@ -380,6 +381,7 @@ func TestConcurrentBlockingAndNonBlocking(t *testing.T) {
 				successCount.Add(1)
 			}
 		}
+		t.Log("Blocking Enqueue producer done")
 	}()
 
 	// Read with TryRead
@@ -391,6 +393,7 @@ func TestConcurrentBlockingAndNonBlocking(t *testing.T) {
 			consumer.TryRead()
 			time.Sleep(2 * time.Millisecond)
 		}
+		t.Log("TryRead consumer done")
 	}()
 
 	// Read with blocking Read
@@ -401,12 +404,15 @@ func TestConcurrentBlockingAndNonBlocking(t *testing.T) {
 		for i := 0; i < 30; i++ {
 			data := consumer.Read()
 			if data == nil {
+				t.Logf("Read returned nil at index %d", i)
 				break
 			}
 		}
+		t.Log("Blocking Read consumer done")
 	}()
 
 	wg.Wait()
+	t.Log("All waitgroups done")
 
 	// Some operations should have succeeded
 	if successCount.Load() == 0 {

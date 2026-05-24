@@ -2,6 +2,7 @@ package queue
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -19,17 +20,22 @@ type Metrics struct {
 	memoryLimitHits int64
 
 	// Latency tracking
-	enqueueLatency    []time.Duration
-	dequeueLatency    []time.Duration
-	maxLatencySamples int
+	enqueueLatency      []time.Duration
+	enqueueLatencyIdx   int
+	enqueueLatencyCount int
+
+	dequeueLatency      []time.Duration
+	dequeueLatencyIdx   int
+	dequeueLatencyCount int
+	maxLatencySamples   int
 }
 
 // NewMetrics creates a new metrics tracker for a queue
 func NewMetrics(q *Queue) *Metrics {
 	return &Metrics{
 		queue:             q,
-		enqueueLatency:    make([]time.Duration, 0, 1000),
-		dequeueLatency:    make([]time.Duration, 0, 1000),
+		enqueueLatency:    make([]time.Duration, 1000),
+		dequeueLatency:    make([]time.Duration, 1000),
 		maxLatencySamples: 1000,
 	}
 }
@@ -76,11 +82,11 @@ func (m *Metrics) RecordEnqueue(duration time.Duration, err error) {
 		}
 	}
 
-	// Record latency (keep last N samples)
-	if len(m.enqueueLatency) >= m.maxLatencySamples {
-		m.enqueueLatency = m.enqueueLatency[1:]
+	m.enqueueLatency[m.enqueueLatencyIdx] = duration
+	m.enqueueLatencyIdx = (m.enqueueLatencyIdx + 1) % m.maxLatencySamples
+	if m.enqueueLatencyCount < m.maxLatencySamples {
+		m.enqueueLatencyCount++
 	}
-	m.enqueueLatency = append(m.enqueueLatency, duration)
 }
 
 // RecordDequeue records a dequeue operation
@@ -90,11 +96,11 @@ func (m *Metrics) RecordDequeue(duration time.Duration) {
 
 	m.totalDequeued++
 
-	// Record latency (keep last N samples)
-	if len(m.dequeueLatency) >= m.maxLatencySamples {
-		m.dequeueLatency = m.dequeueLatency[1:]
+	m.dequeueLatency[m.dequeueLatencyIdx] = duration
+	m.dequeueLatencyIdx = (m.dequeueLatencyIdx + 1) % m.maxLatencySamples
+	if m.dequeueLatencyCount < m.maxLatencySamples {
+		m.dequeueLatencyCount++
 	}
-	m.dequeueLatency = append(m.dequeueLatency, duration)
 }
 
 // RecordExpired records expired items
@@ -127,14 +133,14 @@ func (m *Metrics) GetSnapshot() MetricsSnapshot {
 	}
 
 	// Calculate latency percentiles
-	if len(m.enqueueLatency) > 0 {
-		snapshot.AvgEnqueueLatency = calculateAvg(m.enqueueLatency)
-		snapshot.P95EnqueueLatency = calculateP95(m.enqueueLatency)
+	if m.enqueueLatencyCount > 0 {
+		snapshot.AvgEnqueueLatency = calculateAvg(m.enqueueLatency[:m.enqueueLatencyCount])
+		snapshot.P95EnqueueLatency = calculateP95(m.enqueueLatency[:m.enqueueLatencyCount])
 	}
 
-	if len(m.dequeueLatency) > 0 {
-		snapshot.AvgDequeueLatency = calculateAvg(m.dequeueLatency)
-		snapshot.P95DequeueLatency = calculateP95(m.dequeueLatency)
+	if m.dequeueLatencyCount > 0 {
+		snapshot.AvgDequeueLatency = calculateAvg(m.dequeueLatency[:m.dequeueLatencyCount])
+		snapshot.P95DequeueLatency = calculateP95(m.dequeueLatency[:m.dequeueLatencyCount])
 	}
 
 	return snapshot
@@ -203,14 +209,7 @@ func calculateP95(durations []time.Duration) time.Duration {
 	sorted := make([]time.Duration, len(durations))
 	copy(sorted, durations)
 
-	// Bubble sort (simple for small samples)
-	for i := 0; i < len(sorted); i++ {
-		for j := i + 1; j < len(sorted); j++ {
-			if sorted[i] > sorted[j] {
-				sorted[i], sorted[j] = sorted[j], sorted[i]
-			}
-		}
-	}
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
 
 	index := int(float64(len(sorted)) * 0.95)
 	if index >= len(sorted) {
@@ -230,6 +229,8 @@ func (m *Metrics) Reset() {
 	m.totalExpired = 0
 	m.enqueueErrors = 0
 	m.memoryLimitHits = 0
-	m.enqueueLatency = make([]time.Duration, 0, m.maxLatencySamples)
-	m.dequeueLatency = make([]time.Duration, 0, m.maxLatencySamples)
+	m.enqueueLatencyIdx = 0
+	m.enqueueLatencyCount = 0
+	m.dequeueLatencyIdx = 0
+	m.dequeueLatencyCount = 0
 }

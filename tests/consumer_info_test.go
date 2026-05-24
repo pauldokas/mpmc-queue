@@ -384,10 +384,14 @@ func TestHasMoreDataAtChunkBoundary(t *testing.T) {
 	}
 
 	// Read last item
-	consumer.TryRead()
+	data := consumer.TryRead()
+	t.Logf("TryRead last item: %v", data)
 
 	// Should have no more data
-	if consumer.HasMoreData() {
+	hasMore := consumer.HasMoreData()
+	t.Logf("HasMoreData after read: %v", hasMore)
+	
+	if hasMore {
 		t.Error("Should have no more data")
 	}
 }

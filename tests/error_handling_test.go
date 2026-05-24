@@ -141,6 +141,27 @@ func TestExtremelyLargePayload(t *testing.T) {
 	}
 }
 
+func TestEnqueueOversizedPayloadBlocksForever(t *testing.T) {
+	q := queue.NewQueue("oversized-test")
+	defer q.Close()
+
+	oversizedPayload := make([]byte, 2000000)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- q.Enqueue(oversizedPayload)
+	}()
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("Expected error, got nil")
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Enqueue blocked forever on oversized payload instead of returning error immediately")
+	}
+}
+
 // TestPayloadIntegrity tests various payload types
 func TestPayloadIntegrity(t *testing.T) {
 	q := queue.NewQueue("payload-integrity-test")

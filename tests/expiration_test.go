@@ -328,7 +328,8 @@ func TestLongRunningExpiration(t *testing.T) {
 		}
 	}
 
-checkNotifications:
+	checkNotifications:
+	t.Logf("Final stats: TotalItems=%d, notificationCount=%d", stats.TotalItems, notificationCount)
 	if notificationCount == 0 {
 		t.Error("Expected some expiration notifications")
 	}

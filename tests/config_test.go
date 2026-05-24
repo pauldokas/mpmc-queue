@@ -70,10 +70,10 @@ func TestMemoryCaching(t *testing.T) {
 }
 
 func TestBatchMemoryValidation(t *testing.T) {
-	// Create queue with 20KB limit (enough for 2 items + chunk overhead, but not 3)
-	// Chunk overhead is ~8KB. Item overhead is ~200B.
-	// 2 items (4000B payload) = ~8.4KB items + 8KB chunk = ~16.4KB
-	// 3 items (4000B payload) = ~12.6KB items + 8KB chunk = ~20.6KB
+	// Create queue with 20KB limit
+	// Item overhead is ~200B.
+	// 4 items (4000B payload) = ~16.8KB items (FITS in 20KB)
+	// 5 items (4000B payload) = ~21.0KB items (FAILS in 20KB)
 	config := queue.QueueConfig{
 		TTL:       10 * time.Minute,
 		MaxMemory: 20 * 1024,
@@ -81,25 +81,22 @@ func TestBatchMemoryValidation(t *testing.T) {
 	q := queue.NewQueueWithConfig("test-batch-mem", config)
 	defer q.Close()
 
-	// Create payload that fits individually but batch fails
 	payload := make([]byte, 4000)
 
-	// Batch of 3
-	batch := []any{payload, payload, payload}
-
-	// Should fail atomically
-	err := q.TryEnqueueBatch(batch)
+	// Batch of 5 (21.0KB) should fail because payload exceeds limit
+	batchFail := []any{payload, payload, payload, payload, payload}
+	err := q.TryEnqueueBatch(batchFail)
 	if err == nil {
-		t.Error("Expected error for batch exceeding limit, got nil")
+		t.Error("Expected error for batch payload exceeding limit, got nil")
 	}
 
 	if !q.IsEmpty() {
 		t.Error("Queue should be empty after failed batch")
 	}
 
-	// Verify logic with smaller batch that fits
-	batchSmall := []any{payload, payload}
-	if err := q.TryEnqueueBatch(batchSmall); err != nil {
+	// Verify logic with batch of 4 (16.8KB) that fits (even if chunk overhead pushes total over limit)
+	batchSuccess := []any{payload, payload, payload, payload}
+	if err := q.TryEnqueueBatch(batchSuccess); err != nil {
 		t.Errorf("Failed to enqueue valid batch: %v", err)
 	}
 }

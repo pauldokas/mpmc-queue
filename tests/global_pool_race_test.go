@@ -16,7 +16,7 @@ func TestGlobalPoolRace(t *testing.T) {
 	defer q2.Close()
 
 	for i := 0; i < 2000; i++ {
-		q1.TryEnqueue(i)
+		_ = q1.TryEnqueue(i)
 	}
 
 	c1 := q1.AddConsumer()
@@ -36,7 +36,7 @@ func TestGlobalPoolRace(t *testing.T) {
 		defer wg.Done()
 		time.Sleep(20 * time.Millisecond)
 		for i := 0; i < 10000; i++ {
-			q2.TryEnqueue(i)
+			_ = q2.TryEnqueue(i)
 		}
 	}()
 

@@ -46,9 +46,11 @@ func (cl *ChunkedList) Enqueue(data *QueueData) error {
 
 		if lastChunk.IsFull() {
 			// Create new chunk
-			lastChunk = NewChunkNode()
-			cl.list.PushBack(lastChunk)
+			newChunk := NewChunkNode()
+			newElement := cl.list.PushBack(newChunk)
 			cl.memoryTracker.AddChunk()
+			lastChunk.NextElement.Store(newElement)
+			lastChunk = newChunk
 		}
 	}
 
@@ -85,9 +87,11 @@ func (cl *ChunkedList) EnqueueBatch(dataItems []*QueueData) error {
 
 			if lastChunk.IsFull() {
 				// Create new chunk
-				lastChunk = NewChunkNode()
-				cl.list.PushBack(lastChunk)
+				newChunk := NewChunkNode()
+				newElement := cl.list.PushBack(newChunk)
 				cl.memoryTracker.AddChunk()
+				lastChunk.NextElement.Store(newElement)
+				lastChunk = newChunk
 			}
 		}
 
@@ -130,6 +134,8 @@ func (cl *ChunkedList) GetChunk(element *list.Element) *ChunkNode {
 type ChunkRemovalInfo struct {
 	Element      *list.Element
 	RemovedCount int
+	OldHead      int
+	NewHead      int
 }
 
 // RemoveExpiredData removes expired data from all chunks
@@ -142,13 +148,16 @@ func (cl *ChunkedList) RemoveExpiredData(ttl time.Duration) (int, []ChunkRemoval
 	element := cl.list.Front()
 	for element != nil {
 		chunk := element.Value.(*ChunkNode)
+		oldHead := int(atomic.LoadInt32(&chunk.head))
 		removedFromChunk, removedItems := chunk.RemoveExpired(ttl)
+		newHead := int(atomic.LoadInt32(&chunk.head))
 
 		if removedFromChunk > 0 {
 			// Update memory tracking properly
 			for _, data := range removedItems {
 				cl.memoryTracker.RemoveData(data)
 				cl.totalItems.Add(-1)
+				data.Release()
 			}
 			totalRemoved += removedFromChunk
 
@@ -156,6 +165,8 @@ func (cl *ChunkedList) RemoveExpiredData(ttl time.Duration) (int, []ChunkRemoval
 			removalInfo = append(removalInfo, ChunkRemovalInfo{
 				Element:      element,
 				RemovedCount: removedFromChunk,
+				OldHead:      oldHead,
+				NewHead:      newHead,
 			})
 		}
 
@@ -196,6 +207,17 @@ func (cl *ChunkedList) Clear() {
 	for cl.list.Len() > 0 {
 		element := cl.list.Front()
 		chunk := element.Value.(*ChunkNode)
+		
+		size := chunk.GetSize()
+		head := int(atomic.LoadInt32(&chunk.head))
+		for i := head; i < size; i++ {
+			data := chunk.Data[i].Load()
+			if data != nil {
+				data.Release()
+				chunk.Data[i].Store(nil)
+			}
+		}
+
 		cl.list.Remove(element)
 		cl.memoryTracker.RemoveChunk()
 		PutChunkNode(chunk)
@@ -226,7 +248,7 @@ func (cl *ChunkedList) IterateFrom(element *list.Element, indexInChunk int, call
 			}
 		}
 
-		currentElement = currentElement.Next()
+		currentElement = chunk.NextElement.Load()
 		currentIndex = 0 // Reset index for subsequent chunks
 	}
 }
