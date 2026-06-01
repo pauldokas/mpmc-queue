@@ -558,6 +558,28 @@ func (c *Consumer) Close() {
 	close(c.notificationCh)
 }
 
+// Ready returns a channel that is signaled when new data is available in the queue.
+func (c *Consumer) Ready() <-chan struct{} {
+	return c.queue.enqueueNotify
+}
+
+// NativeChannel starts a background goroutine that pipes queue items into a standard Go channel.
+// This is useful for multiplexing with other native Go channels.
+func (c *Consumer) NativeChannel() <-chan *QueueData {
+	ch := make(chan *QueueData)
+	go func() {
+		defer close(ch)
+		for {
+			data := c.Read()
+			if data == nil {
+				return // Queue is closed
+			}
+			ch <- data
+		}
+	}()
+	return ch
+}
+
 // TryReadWhere attempts to read the next data item that matches the predicate without blocking
 // Returns nil if no matching data is available
 // The predicate function should return true for items that should be returned

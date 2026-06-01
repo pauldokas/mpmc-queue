@@ -337,16 +337,35 @@ func produceBatch(q *queue.Queue, items []any) error {
 func eventStream(q *queue.Queue) {
     consumer := q.AddConsumer()
     
-    for {
-        data := consumer.Read()
-        if data == nil {
-            time.Sleep(50 * time.Millisecond)
-            continue
-        }
-        
+    // Using NativeChannel() to seamlessly integrate with other Go channels
+    for data := range consumer.NativeChannel() {
         // Stream events in order
         event := data.Payload.(Event)
         handleEvent(event)
+    }
+}
+```
+
+---
+
+### Multiplexing with select
+
+```go
+func multiplex(consumer *queue.Consumer, otherChan <-chan string, ctx context.Context) {
+    for {
+        select {
+        case <-ctx.Done():
+            return
+            
+        case <-consumer.Ready():
+            // Data is available, try reading it
+            if data := consumer.TryRead(); data != nil {
+                fmt.Println("From Queue:", data.Payload)
+            }
+            
+        case msg := <-otherChan:
+            fmt.Println("From other channel:", msg)
+        }
     }
 }
 ```
@@ -410,6 +429,12 @@ func enqueueWithMemoryCheck(q *queue.Queue, payload any) error {
 
 ```go
 func gracefulShutdown(q *queue.Queue, consumers []*queue.Consumer) {
+    // Wait for queue closure using Done()
+    go func() {
+        <-q.Done()
+        log.Println("Queue has been closed")
+    }()
+
     // Signal consumers to stop
     done := make(chan struct{})
     
@@ -455,8 +480,11 @@ func gracefulShutdown(q *queue.Queue, consumers []*queue.Consumer) {
 ### Custom TTL per Queue
 
 ```go
-// Short-lived cache
-cache := queue.NewQueueWithTTL("cache", 5*time.Minute)
+// Short-lived cache with item limit
+cache := queue.NewQueueWithConfig("cache", queue.QueueConfig{
+    TTL:      5 * time.Minute,
+    MaxItems: 10000,
+})
 defer cache.Close()
 
 // Long-lived audit log

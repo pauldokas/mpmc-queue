@@ -48,6 +48,7 @@ The central coordinator that manages data, consumers, and expiration.
 │  ┌────────────────────────────────────────┐  │
 │  │  name, ttl, mutex, stopChan            │  │
 │  │  enqueueNotify, dequeueNotify channels │  │
+│  │  Done() exported channel               │  │
 │  └────────────────────────────────────────┘  │
 │                                              │
 │  ┌─────────────┐  ┌──────────────────┐       │
@@ -148,6 +149,7 @@ Consumer 3:  Chunk A[0] ─┘
 - Independent position tracking
 - Local dequeue history (rolling window, configurable size)
 - Notification channel for expirations
+- Native channel support via `NativeChannel()` and `Ready()` for `select` multiplexing
 
 ---
 
@@ -746,10 +748,11 @@ Where:
 
 ### Potential Enhancements
 
-1. **Configurable Memory Limit**
+1. **Configurable Memory Limit & Capacity**
    ```go
    type QueueConfig struct {
        MaxMemory int64
+       MaxItems  int64
        ChunkSize int
        TTL       time.Duration
    }

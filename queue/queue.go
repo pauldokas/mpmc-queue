@@ -48,6 +48,7 @@ type Queue struct {
 	enqueueNotify           chan struct{}
 	dequeueNotify           chan struct{}
 	maxConsumerHistory      int
+	maxItems                int64
 	expirationCheckInterval time.Duration
 	consumerEvictionTimeout time.Duration
 }
@@ -56,6 +57,7 @@ type Queue struct {
 type QueueConfig struct {
 	TTL                     time.Duration
 	MaxMemory               int64
+	MaxItems                int64
 	MaxConsumerHistory      int
 	ExpirationCheckInterval time.Duration
 	ConsumerEvictionTimeout time.Duration
@@ -108,6 +110,7 @@ func NewQueueWithConfig(name string, config QueueConfig) *Queue {
 		enqueueNotify:           make(chan struct{}, 100),
 		dequeueNotify:           make(chan struct{}, 100),
 		maxConsumerHistory:      config.MaxConsumerHistory,
+		maxItems:                config.MaxItems,
 		expirationCheckInterval: interval,
 		consumerEvictionTimeout: config.ConsumerEvictionTimeout,
 	}
@@ -143,6 +146,10 @@ func (q *Queue) TryEnqueue(payload any) error {
 		return &QueueClosedError{Operation: "enqueue"}
 	}
 
+	if q.maxItems > 0 && q.data.GetTotalItems() >= q.maxItems {
+		return &QueueFullError{MaxItems: q.maxItems}
+	}
+
 	err := q.data.Enqueue(data)
 	if err == nil {
 		q.notifyWaitingConsumers()
@@ -173,6 +180,16 @@ func (q *Queue) Enqueue(payload any) error {
 		if q.closed.Load() {
 			q.mutex.Unlock()
 			return &QueueClosedError{Operation: "enqueue"}
+		}
+
+		if q.maxItems > 0 && q.data.GetTotalItems() >= q.maxItems {
+			q.mutex.Unlock()
+			select {
+			case <-q.dequeueNotify:
+				continue
+			case <-q.stopChan:
+				return &QueueClosedError{Operation: "enqueue"}
+			}
 		}
 
 		err := q.data.Enqueue(data)
@@ -238,6 +255,18 @@ func (q *Queue) EnqueueWithContext(ctx context.Context, payload any) error {
 			return &QueueClosedError{Operation: "enqueue"}
 		}
 
+		if q.maxItems > 0 && q.data.GetTotalItems() >= q.maxItems {
+			q.mutex.Unlock()
+			select {
+			case <-q.dequeueNotify:
+				continue
+			case <-q.stopChan:
+				return &QueueClosedError{Operation: "enqueue"}
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
 		err := q.data.Enqueue(data)
 		if err == nil {
 			q.mutex.Unlock()
@@ -288,6 +317,10 @@ func (q *Queue) TryEnqueueBatch(payloads []any) error {
 
 	if q.closed.Load() {
 		return &QueueClosedError{Operation: "enqueue batch"}
+	}
+
+	if q.maxItems > 0 && q.data.GetTotalItems()+int64(len(payloads)) > q.maxItems {
+		return &QueueFullError{MaxItems: q.maxItems}
 	}
 
 	// Create all data items upfront and calculate total size
@@ -351,6 +384,22 @@ func (q *Queue) EnqueueBatch(payloads []any) error {
 		if q.closed.Load() {
 			q.mutex.Unlock()
 			return &QueueClosedError{Operation: "enqueue batch"}
+		}
+
+		if q.maxItems > 0 && int64(len(payloads)) > q.maxItems {
+			q.mutex.Unlock()
+			return &QueueFullError{MaxItems: q.maxItems}
+		}
+
+		if q.maxItems > 0 && q.data.GetTotalItems()+int64(len(payloads)) > q.maxItems {
+			q.mutex.Unlock()
+			select {
+			case <-q.dequeueNotify:
+				continue
+			case <-q.stopChan:
+				return &QueueClosedError{Operation: "enqueue batch"}
+			}
+			continue
 		}
 
 		if totalBatchSize > q.memoryTracker.GetMaxMemory() {
@@ -422,6 +471,24 @@ func (q *Queue) EnqueueBatchWithContext(ctx context.Context, payloads []any) err
 		if q.closed.Load() {
 			q.mutex.Unlock()
 			return &QueueClosedError{Operation: "enqueue batch"}
+		}
+
+		if q.maxItems > 0 && int64(len(payloads)) > q.maxItems {
+			q.mutex.Unlock()
+			return &QueueFullError{MaxItems: q.maxItems}
+		}
+
+		if q.maxItems > 0 && q.data.GetTotalItems()+int64(len(payloads)) > q.maxItems {
+			q.mutex.Unlock()
+			select {
+			case <-q.dequeueNotify:
+				continue
+			case <-q.stopChan:
+				return &QueueClosedError{Operation: "enqueue batch"}
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			continue
 		}
 
 		if totalBatchSize > q.memoryTracker.GetMaxMemory() {
@@ -565,6 +632,12 @@ func (q *Queue) ForceExpiration() int {
 
 // Close closes the queue and cleans up resources
 // Safe to call multiple times (idempotent)
+// Done returns a channel that's closed when the queue is closed
+func (q *Queue) Done() <-chan struct{} {
+	return q.stopChan
+}
+
+// Close gracefully shuts down the queue and all its consumers
 func (q *Queue) Close() {
 	// Only close once
 	if !q.closed.CompareAndSwap(false, true) {

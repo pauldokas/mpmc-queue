@@ -12,6 +12,7 @@ A high-performance, thread-safe, memory-constrained multi-producer multi-consume
 
 - ✅ **Thread Safe**: Full concurrency support for multiple producers and consumers (all race conditions fixed)
 - ✅ **Memory Constrained**: Configurable memory limit (default 1MB) with real-time usage tracking
+- ✅ **Item Count Limits**: Configurable item count limit via `MaxItems` configuration
 - ✅ **Time-based Expiration**: Automatic cleanup of expired items (10-minute default TTL)
 - ✅ **Independent Consumers**: Each consumer reads all data at their own pace
 - ✅ **Consumer Groups**: Load balancing support for distributing work among consumers
@@ -20,6 +21,7 @@ A high-performance, thread-safe, memory-constrained multi-producer multi-consume
 - ✅ **Consumer Notifications**: Alerts when data expires before being read
 - ✅ **Batch Operations**: Atomic batch enqueue and efficient batch read operations
 - ✅ **Rich Statistics**: Comprehensive metrics for queue and consumer performance
+- ✅ **Native Go Primitives**: Standard Go channels exposed for readiness and multiplexing (`Done()`, `Ready()`, `NativeChannel()`)
 - ✅ **Position Tracking**: Accurate consumer position even during expiration
 - ✅ **Atomic Operations**: Lock-free stats and RCU-based consumer management
 
@@ -242,7 +244,7 @@ for _, cs := range consumerStats {
 #### Creation
 - `NewQueue(name string) *Queue` - Create queue with default settings
 - `NewQueueWithTTL(name, ttl) *Queue` - Create queue with custom TTL
-- `NewQueueWithConfig(name, config) *Queue` - Create queue with custom config (TTL, MaxMemory, MaxConsumerHistory, ExpirationCheckInterval)
+- `NewQueueWithConfig(name, config) *Queue` - Create queue with custom config (TTL, MaxMemory, MaxItems, MaxConsumerHistory, ExpirationCheckInterval)
 
 #### Data Operations (Blocking)
 - `Enqueue(payload any) error` - Add single item (blocks if queue full)
@@ -264,6 +266,9 @@ for _, cs := range consumerStats {
 - `GetTTL() time.Duration` - Get current TTL
 - `EnableExpiration()` - Enable automatic expiration
 - `DisableExpiration()` - Disable automatic expiration
+
+#### Synchronization
+- `Done() <-chan struct{}` - Returns a channel closed when the queue shuts down
 
 #### Statistics
 - `GetQueueStats() QueueStats` - Get queue metrics
@@ -292,6 +297,10 @@ for _, cs := range consumerStats {
 - `TryReadWhere(predicate func(*QueueData) bool) *QueueData` - Read next item matching predicate (non-blocking)
 - `ReadWhere(predicate func(*QueueData) bool) *QueueData` - Read next item matching predicate (blocking)
 - `ReadWhereWithContext(ctx context.Context, predicate func(*QueueData) bool) (*QueueData, error)` - Read with predicate and context support
+
+#### Synchronization
+- `Ready() <-chan struct{}` - Returns a channel signaled when new data is available
+- `NativeChannel() <-chan *QueueData` - Starts a background goroutine piping items to a standard channel
 
 #### Information
 - `GetID() string` - Get consumer UUID
@@ -467,6 +476,7 @@ if qErr, ok := err.(*queue.QueueError); ok {
 ```
 
 **Available Error Types:**
+- `QueueFullError` - Queue item limit reached
 - `MemoryLimitError` - Memory limit exceeded
 - `QueueClosedError` - Operation attempted on closed queue
 - `ConsumerNotFoundError` - Consumer lookup failed (reserved for future use)

@@ -48,6 +48,15 @@ func (e *MemoryLimitError) Error() string {
 	return fmt.Sprintf("memory limit exceeded: current=%d, max=%d, needed=%d", e.Current, e.Max, e.Needed)
 }
 
+// QueueFullError is returned when a queue item limit is reached
+type QueueFullError struct {
+	MaxItems int64 // Maximum allowed items
+}
+
+func (e *QueueFullError) Error() string {
+	return fmt.Sprintf("queue item limit reached: max=%d", e.MaxItems)
+}
+
 // QueueError represents a general queue error with optional error wrapping
 // Moved from chunked_list.go and enhanced with error wrapping support
 type QueueError struct {

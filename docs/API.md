@@ -75,10 +75,10 @@ defer q.Close()
   type QueueConfig struct {
       TTL                     time.Duration // Time-to-live for items
       MaxMemory               int64         // Maximum memory in bytes
+      MaxItems                int64         // Maximum item count (0 means no limit)
       MaxConsumerHistory      int           // Maximum history records per consumer
       ExpirationCheckInterval time.Duration // How often to check for expired items
   }
-
  ```
  
  **Example:**
@@ -86,6 +86,7 @@ defer q.Close()
  config := queue.QueueConfig{
      TTL:       30 * time.Minute,
      MaxMemory: 10 * 1024 * 1024, // 10MB
+     MaxItems:  1000,             // Limit to 1000 items
  }
  q := queue.NewQueueWithConfig("custom-queue", config)
  defer q.Close()
@@ -405,6 +406,25 @@ Returns statistics for all consumers.
 
 **Returns:**
 - `[]ConsumerStats`: Slice of consumer statistics
+
+---
+
+#### `Done() <-chan struct{}`
+
+Returns a channel that is closed when the queue is closed. Useful for integrating the queue with standard Go `select` statements for shutdown coordination.
+
+**Returns:**
+- `<-chan struct{}`: Channel that closes when the queue is closed.
+
+**Example:**
+```go
+select {
+case <-q.Done():
+    fmt.Println("Queue is shutting down")
+case <-ctx.Done():
+    fmt.Println("Context cancelled")
+}
+```
 
 ---
 
@@ -931,6 +951,46 @@ go func() {
 
 ---
 
+#### `Ready() <-chan struct{}`
+
+Returns a channel that is signaled when new data is available in the queue.
+This is useful for avoiding exponential backoff when trying to use `TryRead` in a polling loop, allowing seamless integration with Go native `reflect.Select` or standard `select`.
+
+**Returns:**
+- `<-chan struct{}`: Signal channel indicating new data might be available.
+
+**Example:**
+```go
+select {
+case <-consumer.Ready():
+    if data := consumer.TryRead(); data != nil {
+        fmt.Println("Read data:", data.Payload)
+    }
+case <-time.After(1 * time.Second):
+    fmt.Println("Timeout waiting for data")
+}
+```
+
+---
+
+#### `NativeChannel() <-chan *QueueData`
+
+Starts a background goroutine that pipes queue items into a standard Go channel.
+This provides a native channel-based adapter over the consumer, ideal for multiplexing queue data directly alongside standard Go channels.
+
+**Returns:**
+- `<-chan *QueueData`: Standard Go channel outputting the queue data.
+
+**Example:**
+```go
+ch := consumer.NativeChannel()
+for data := range ch {
+    fmt.Println("Received:", data.Payload)
+}
+```
+
+---
+
 ### Position Management
 
 #### `SetPosition(element *list.Element, index int)`
@@ -1055,6 +1115,27 @@ Dequeue history record (see GetDequeueHistory).
 ---
 
 ## Error Types
+
+### QueueFullError
+
+Returned when the queue has reached its maximum item capacity (as defined by `MaxItems` in `QueueConfig`).
+
+**Fields:**
+```go
+type QueueFullError struct {
+    MaxItems int64 // Maximum allowed items
+}
+```
+
+**Example:**
+```go
+err := q.TryEnqueue(payload)
+if fullErr, ok := err.(*queue.QueueFullError); ok {
+    fmt.Printf("Queue full! Max items: %d\n", fullErr.MaxItems)
+}
+```
+
+---
 
 ### MemoryLimitError
 
