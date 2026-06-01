@@ -399,7 +399,6 @@ func (q *Queue) EnqueueBatch(payloads []any) error {
 			case <-q.stopChan:
 				return &QueueClosedError{Operation: "enqueue batch"}
 			}
-			continue
 		}
 
 		if totalBatchSize > q.memoryTracker.GetMaxMemory() {
@@ -488,7 +487,6 @@ func (q *Queue) EnqueueBatchWithContext(ctx context.Context, payloads []any) err
 			case <-ctx.Done():
 				return ctx.Err()
 			}
-			continue
 		}
 
 		if totalBatchSize > q.memoryTracker.GetMaxMemory() {
